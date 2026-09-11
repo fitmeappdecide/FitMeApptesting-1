@@ -53,7 +53,9 @@ class AVAAgent:
 
             project_id = getattr(settings, "vertex_project_id", None) or os.getenv("VERTEX_PROJECT_ID") or "fitme-3ac94"
             location = getattr(settings, "vertex_location", None) or os.getenv("VERTEX_LOCATION") or "us-central1"
-            cred_path = getattr(settings, "firebase_credentials_path", None) or "./firebase/fitme-3ac94-firebase-adminsdk-fbsvc-5ec19c616f.json"
+            backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+            gcp_key = os.path.join(backend_dir, "gcp-vertex-key.json")
+            cred_path = gcp_key if os.path.exists(gcp_key) else (os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or getattr(settings, "firebase_credentials_path", None))
 
             if cred_path and os.path.exists(cred_path):
                 _creds = _sa.Credentials.from_service_account_file(cred_path, scopes=["https://www.googleapis.com/auth/cloud-platform"])
@@ -140,7 +142,9 @@ class AVAAgent:
     async def _generate_text_with_gemini(self, prompt: str) -> Optional[str]:
         project_id = getattr(settings, "vertex_project_id", None) or os.getenv("VERTEX_PROJECT_ID") or "fitme-3ac94"
         location = getattr(settings, "vertex_location", None) or os.getenv("VERTEX_LOCATION") or "us-central1"
-        cred_path = getattr(settings, "firebase_credentials_path", None) or "./firebase/fitme-3ac94-firebase-adminsdk-fbsvc-5ec19c616f.json"
+        backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        gcp_key = os.path.join(backend_dir, "gcp-vertex-key.json")
+        cred_path = gcp_key if os.path.exists(gcp_key) else (os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or getattr(settings, "firebase_credentials_path", None))
 
         try:
             import google.oauth2.service_account as _sa

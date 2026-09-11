@@ -625,7 +625,9 @@ async def _fetch_gemini_grounded_candidates(
     """
     project_id = getattr(settings, "vertex_project_id", None) or os.getenv("VERTEX_PROJECT_ID") or "fitme-3ac94"
     location = getattr(settings, "vertex_location", None) or os.getenv("VERTEX_LOCATION") or "us-central1"
-    cred_path = getattr(settings, "firebase_credentials_path", None) or "./firebase/fitme-3ac94-firebase-adminsdk-fbsvc-5ec19c616f.json"
+    backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    gcp_key = os.path.join(backend_dir, "gcp-vertex-key.json")
+    cred_path = gcp_key if os.path.exists(gcp_key) else (os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or getattr(settings, "firebase_credentials_path", None))
 
     try:
         # ── Get OAuth2 access token from service account ──
