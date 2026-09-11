@@ -1,0 +1,129 @@
+/**
+ * Thin wrapper around the native `fitme-extraction` Expo module.
+ *
+ * This is the single entry point the UI should use to extract product data
+ * from a URL. The actual extraction logic lives natively:
+ *   iOS:     native/ios-extraction-core/WebViewExtractor.swift
+ *   Android: native/android-extraction-core (ExtractionFacade / WebExtractionEngine)
+ *
+ * Do not reimplement extraction logic in JS — this file only bridges to it.
+ */
+import { extractProduct as nativeExtractProduct, addExtractionProgressListener, Product } from 'fitme-extraction';
+import type { ExtractedProductInput } from './api';
+import { productApi } from './api';
+
+export interface NormalizedProduct extends Product {
+  sourceType: 'url' | 'image_upload';
+  sourceUrl: string | null;
+  platform: string | null;
+}
+
+export class ExtractionError extends Error {}
+
+export function sanitizeImageUrl(url: string | null | undefined): string {
+  if (!url) return '';
+  let u = url.trim();
+
+  // AJIO & Shein India CDN High-Res Transformer: upgrade thumbnail dimensions (-78Wx98H-, -473Wx593H-, -286Wx362H-, -111Wx142H-) to full HD 1000Wx1500H
+  if (u.includes('ajio') || u.includes('shein') || u.includes('jiocdn')) {
+    u = u.replace(/-[0-9]+Wx[0-9]+H-/gi, '-1000Wx1500H-');
+    u = u.replace(/-[0-9]+Wx[0-9]+H(?=\.)/gi, '-1000Wx1500H');
+  }
+
+  // Nykaa / Nykaa Fashion / ImageKit High-Res Transformer: remove path-embedded transforms like /tr:h-400,w-300,cm-pad_resize/
+  if (u.includes('nykaa') || u.includes('hsapps.com') || u.includes('imagekit')) {
+    u = u.replace(/\/tr:[^\/]+\//g, '/');
+    u = u.replace(/([?&]tr=)([^&]+)/gi, '$1w-1000,q-90');
+  }
+
+  // Myntra CDN High-Res Transformer
+  if (u.includes('myntassets.com') || u.includes('myntra')) {
+    u = u.replace(/\/h_[0-9]+,w_[0-9]+\//g, '/h_1440,w_1080/');
+  }
+
+  return u;
+}
+
+export function sanitizeImageUrls(urls: string[] | null | undefined): string[] {
+  if (!urls || urls.length === 0) return [];
+  return urls.map(sanitizeImageUrl).filter(Boolean);
+}
+
+export async function extractProductFromUrl(url: string): Promise<NormalizedProduct> {
+  const trimmed = url.trim();
+  if (!/^https?:\/\//i.test(trimmed)) {
+    throw new ExtractionError('Please enter a valid product URL (starting with http:// or https://).');
+  }
+  try {
+    const product = await nativeExtractProduct(trimmed);
+    const sanitizedImageUrls = sanitizeImageUrls(product.imageUrls ?? (product.imageUrl ? [product.imageUrl] : []));
+    // Filter out swatches, logos, and banners when selecting the main product preview image
+    const modelImages = sanitizedImageUrls.filter(img => 
+      !/SWATCH|brand-logo|banner|sticky|icon/i.test(img)
+    );
+    const finalImageUrl = modelImages[0] ?? sanitizeImageUrl(product.imageUrl);
+
+    console.log('EXTRACTION RESULT:', JSON.stringify(product, null, 2));
+    console.log('finalImageUrl:', finalImageUrl);
+
+    return {
+      ...product,
+      imageUrl: finalImageUrl,
+      imageUrls: sanitizedImageUrls.length > 0 ? sanitizedImageUrls : [finalImageUrl],
+      sourceType: 'url',
+      sourceUrl: trimmed,
+      platform: detectPlatformFromUrl(trimmed),
+    };
+  } catch (e: any) {
+    throw new ExtractionError(e?.message ?? 'Could not extract product details from that link.');
+  }
+}
+
+export async function extractProductFromImage(imageUri: string): Promise<NormalizedProduct> {
+  // Call the Product Intelligence Engine (Gemini 2.5 Flash) on the backend.
+  // The backend crops the garment, uploads to Supabase, and returns normalized metadata.
+  try {
+    const result = await productApi.extractScreenshot(imageUri);
+
+    // Backend returns images as list of {url, angle} dicts or plain strings
+    const rawImages: string[] = (result.images ?? []).map((img: any) =>
+      typeof img === 'string' ? img : img?.url ?? ''
+    ).filter(Boolean);
+
+    const imageUrl = rawImages[0] ?? imageUri;
+
+    return {
+      title: result.title ?? '',
+      brand: result.brand ?? '',
+      price: result.price ?? '',
+      imageUrl,
+      imageUrls: rawImages.length > 0 ? rawImages : [imageUri],
+      sourceType: 'image_upload',
+      sourceUrl: null,
+      platform: null,
+    };
+  } catch (e: any) {
+    throw new ExtractionError(e?.message ?? 'Failed to analyse the screenshot. Please try again.');
+  }
+}
+
+export { addExtractionProgressListener };
+
+import { normalizeRetailer } from '../constants/retailers';
+
+/** Best-effort platform name detection, mirrors the native detectPlatform() for display purposes. */
+export function detectPlatformFromUrl(url: string): string {
+  return normalizeRetailer(url).name;
+}
+
+export function toExtractedProductInput(product: NormalizedProduct): ExtractedProductInput {
+  return {
+    title: product.title,
+    brand: product.brand,
+    price: product.price,
+    images: product.imageUrls ?? (product.imageUrl ? [product.imageUrl] : []),
+    source_type: product.sourceType,
+    source_url: product.sourceUrl,
+    platform: product.platform,
+  };
+}

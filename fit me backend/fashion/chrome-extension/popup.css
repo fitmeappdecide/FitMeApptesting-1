@@ -1,0 +1,4 @@
+body { width: 260px; margin: 0; padding: 16px; background: #1A1208; color: white; font-family: system-ui, sans-serif; }
+.label { color: #C9974A; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; font-weight: 700; }
+h1 { font-family: Georgia, serif; font-size: 24px; }
+button { width: 100%; border: 0; border-radius: 999px; background: #A0392B; color: white; padding: 12px; font-weight: 700; }

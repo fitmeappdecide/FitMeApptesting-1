@@ -1,0 +1,8 @@
+@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&display=swap");
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+body { margin: 0; background: #1A1208; color: white; font-family: system-ui, sans-serif; }
+.label { color: #C9974A; font-size: 11px; text-transform: uppercase; letter-spacing: .12em; font-weight: 700; }
+.card { background: #2A2018; border: 1px solid #3A3028; border-radius: 8px; }
+

@@ -1,0 +1,9 @@
+{
+  "name": "fitme-extraction",
+  "version": "1.0.0",
+  "description": "FitMe web extraction native module",
+  "main": "index.ts",
+  "peerDependencies": {
+    "expo": "*"
+  }
+}

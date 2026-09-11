@@ -1,0 +1,11 @@
+name = "FitMe"
+client_id = "fitme-dev-client"
+application_url = "https://fitme.local"
+embedded = true
+
+[access_scopes]
+scopes = "read_products,write_products"
+
+[auth]
+redirect_urls = ["https://fitme.local/auth/callback"]
+

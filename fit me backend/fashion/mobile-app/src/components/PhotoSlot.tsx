@@ -1,0 +1,2 @@
+import { Text, View } from "react-native";
+export default function PhotoSlot({ label, captured = false }: { label: string; captured?: boolean }) { return <View style={{ borderColor: captured ? "#4A8C3F" : "#3A3028", borderWidth: 1, borderStyle: captured ? "solid" : "dashed", backgroundColor: captured ? "#1E3A1E" : "#2A2018", borderRadius: 12, padding: 24 }}><Text style={{ color: "white", textAlign: "center" }}>{label}</Text></View>; }

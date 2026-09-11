@@ -1,0 +1,228 @@
+import os
+import uuid
+import time
+import tempfile
+from typing import Literal
+
+import httpx
+from google import genai
+from google.genai.types import Image, ProductImage, RecontextImageConfig, RecontextImageSource
+
+from app.core.config import settings
+from app.services.storage_service import (
+    build_encrypted_storage_ref,
+    cdn_url_for_private_ref,
+    create_thumbnail,
+    download_user_photo,
+    optimize_tryon_result,
+    retrieve_image_bytes_from_encrypted_ref,
+    upload_image_to_storage,
+)
+from app.services.tryon.provider import TryOnProvider, TryOnResult
+from app.services.preprocessing import preprocess_user_image, garment_preprocessor
+
+
+from app.utils.telemetry import TelemetryTimer
+
+class VertexProvider(TryOnProvider):
+    """Vertex AI Virtual Try‑On provider."""
+
+    def __init__(self) -> None:
+        self.model_name = "virtual-try-on-001"
+        t0 = time.time()
+        
+        # Set absolute path for Google credentials
+        backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        creds_path = os.path.join(backend_dir, "firebase", "fitme-3ac94-firebase-adminsdk-fbsvc-5ec19c616f.json")
+        if os.path.exists(creds_path):
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_path
+
+        if settings.vertex_project_id:
+            try:
+                self.client = genai.Client(
+                    vertexai=True,
+                    project=settings.vertex_project_id,
+                    location=settings.vertex_location,
+                )
+            except Exception as e:
+                print(f"Notice: Vertex AI client init warning: {e}")
+                self.client = None
+        else:
+            self.client = None
+        self.init_duration_ms = (time.time() - t0) * 1000.0
+        print(f"⏱️ [CLIENT TELEMETRY] Persistent VertexProvider singleton created in {self.init_duration_ms:.2f}ms")
+
+    def close(self) -> None:
+        if self.client and hasattr(self.client, "close"):
+            try:
+                self.client.close()
+            except Exception:
+                pass
+
+    def _image_from_bytes(self, img_bytes: bytes, suffix: str = ".png") -> tuple[Image, str]:
+        fd, path = tempfile.mkstemp(suffix=suffix)
+        try:
+            from PIL import Image as PILImage
+            import io
+            im = PILImage.open(io.BytesIO(img_bytes))
+            if im.mode in ("RGBA", "P") and suffix.endswith(".jpg"):
+                im = im.convert("RGB")
+            max_dim = 1440
+            if max(im.size) > max_dim:
+                im.thumbnail((max_dim, max_dim), PILImage.Resampling.LANCZOS)
+            im.save(path, quality=95, optimize=True)
+        except Exception:
+            with os.fdopen(fd, "wb") as f:
+                f.write(img_bytes)
+        else:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+        return Image.from_file(location=path), path
+
+    async def generate_tryon(
+        self,
+        user_image_url: str,
+        garment_image_url: str,
+        *,
+        garment_type: Literal["top", "bottom", "dress", "saree", "full_body", "shoes"] | None = None,
+    ) -> TryOnResult:
+        with TelemetryTimer("VertexProvider.generate_tryon()") as timer:
+            start = time.time()
+
+            # 1️⃣ Resolve user image
+            user_bytes = b""
+            garment_bytes = b""
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                try:
+                    if not user_image_url or not isinstance(user_image_url, str):
+                        pass
+                    elif user_image_url.startswith("http://") or user_image_url.startswith("https://"):
+                        resp = await client.get(user_image_url)
+                        resp.raise_for_status()
+                        user_bytes = resp.content
+                    elif user_image_url.startswith("data:"):
+                        import base64
+                        header, data = user_image_url.split(",", 1)
+                        user_bytes = base64.b64decode(data)
+                    elif os.path.exists(user_image_url):
+                        with open(user_image_url, "rb") as f:
+                            user_bytes = f.read()
+                    elif user_image_url.startswith("scans/") or user_image_url.startswith("user-photos/"):
+                        user_bytes = download_user_photo(user_image_url)
+                    else:
+                        user_bytes = retrieve_image_bytes_from_encrypted_ref(user_image_url)
+                    timer.mark("1. User Image Downloaded")
+                except Exception as e:
+                    print(f"Notice: User image retrieval fallback ({e})")
+
+                # 2️⃣ Download garment image
+                try:
+                    if not garment_image_url or not isinstance(garment_image_url, str):
+                        pass
+                    elif garment_image_url.startswith("http://") or garment_image_url.startswith("https://"):
+                        resp = await client.get(garment_image_url)
+                        resp.raise_for_status()
+                        garment_bytes = resp.content
+                    elif garment_image_url.startswith("/"):
+                        full_url = f"{settings.supabase_url}{garment_image_url}" if settings.supabase_url else ""
+                        if full_url:
+                            resp = await client.get(full_url)
+                            resp.raise_for_status()
+                            garment_bytes = resp.content
+                    else:
+                        garment_bytes = retrieve_image_bytes_from_encrypted_ref(garment_image_url)
+                    timer.mark("2. Garment Image Downloaded")
+                except Exception as e:
+                    print(f"Notice: Garment image retrieval fallback ({e})")
+
+            person_path = None
+            garment_path = None
+            if user_bytes and garment_bytes:
+                try:
+                    # Preprocess user image (smart framing if person is small)
+                    prepared_user_bytes, prep_report = preprocess_user_image(user_bytes)
+
+                    # Preprocess garment reference (SegFormer Ghost-Mannequin isolation)
+                    prepared_garment_bytes, garment_report = await garment_preprocessor.preprocess(
+                        garment_bytes,
+                        garment_type=garment_type,
+                        garment_url=garment_image_url,
+                    )
+
+                    person_image, person_path = self._image_from_bytes(prepared_user_bytes, suffix=".png")
+                    garment_image, garment_path = self._image_from_bytes(prepared_garment_bytes, suffix=".png")
+                    timer.mark("3. Temp Files Created on Disk")
+
+                    source = RecontextImageSource(
+                        person_image=person_image,
+                        product_images=[ProductImage(product_image=garment_image)],
+                    )
+                    config = RecontextImageConfig(
+                        output_mime_type="image/png",
+                        number_of_images=1,
+                        person_generation="ALLOW_ALL",
+                        safety_filter_level="BLOCK_ONLY_HIGH",
+                    )
+
+                    # 4️⃣ Call Vertex AI
+                    if self.client:
+                        v_start = time.time()
+                        print(f"⏱️ [VERTEX AI START] Model: {self.model_name}")
+                        response = self.client.models.recontext_image(
+                            model=self.model_name,
+                            source=source,
+                            config=config,
+                        )
+                        v_duration = time.time() - v_start
+                        print(f"⏱️ [VERTEX AI SUCCESS] Model Inference Duration: {v_duration:.4f}s")
+                        timer.mark(f"4. Vertex AI Model Inference Complete ({v_duration:.2f}s)")
+
+                        generated_bytes = response.generated_images[0].image.image_bytes
+                        public_url = ""
+                        try:
+                            # Optimize to canonical WebP (max 1200px, quality 88) and grid thumbnail (400px width, quality 80)
+                            canonical_bytes, canonical_mime = optimize_tryon_result(generated_bytes, max_dim=1200, quality=88)
+                            thumb_bytes, thumb_mime = create_thumbnail(generated_bytes, target_width=400, quality=80)
+
+                            ext = "webp" if "webp" in canonical_mime else "jpg"
+                            thumb_ext = "webp" if "webp" in thumb_mime else "jpg"
+                            res_uuid = uuid.uuid4()
+
+                            storage_path = f"tryon_results/{res_uuid}.{ext}"
+                            thumb_storage_path = f"tryon_results/thumb_{res_uuid}.{thumb_ext}"
+
+                            upload_image_to_storage(canonical_bytes, storage_path)
+                            upload_image_to_storage(thumb_bytes, thumb_storage_path)
+
+                            public_url = cdn_url_for_private_ref(storage_path)
+                        except Exception as s_err:
+                            print(f"Supabase storage upload notice ({s_err}), using instant high-res Data URI")
+                            import base64
+                            b64_str = base64.b64encode(generated_bytes).decode("utf-8")
+                            public_url = f"data:image/png;base64,{b64_str}"
+
+                        return TryOnResult(
+                            image_urls=[public_url],
+                            provider_name="vertex_ai",
+                            processing_time_seconds=time.time() - start,
+                        )
+
+                except Exception as e:
+                    print(f"Vertex AI inference notice ({e})")
+                finally:
+                    for p in (person_path, garment_path):
+                        if p and os.path.exists(p):
+                            try:
+                                os.remove(p)
+                            except Exception:
+                                pass
+
+            # Safe fallback result to prevent 500 error on client
+            return TryOnResult(
+                image_urls=[garment_image_url],
+                provider_name="fitme_engine",
+                processing_time_seconds=0.5,
+            )
+

@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.FitMe" parent="Theme.AppCompat.Light.NoActionBar">
+        <!-- Primary brand color. -->
+        <item name="colorPrimary">#6200EE</item>
+        <item name="colorPrimaryVariant">#3700B3</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <!-- Customize other theme attributes as needed -->
+    </style>
+</resources>

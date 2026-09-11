@@ -1,0 +1,90 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: fitme
+      POSTGRES_PASSWORD: fitme
+      POSTGRES_DB: fitme
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fitme -d fitme"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    env_file:
+      - ./backend/.env.example
+    environment:
+      DATABASE_URL: postgresql+asyncpg://fitme:fitme@postgres:5432/fitme
+      REDIS_URL: redis://redis:6379/0
+      SCRAPER_SERVICE_URL: http://scraper-service:8001
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      scraper-service:
+        condition: service_started
+
+  celery-worker:
+    build: ./backend
+    command: celery -A app.workers.celery_app.celery_app worker --loglevel=info
+    env_file:
+      - ./backend/.env.example
+    environment:
+      DATABASE_URL: postgresql+asyncpg://fitme:fitme@postgres:5432/fitme
+      REDIS_URL: redis://redis:6379/0
+      SCRAPER_SERVICE_URL: http://scraper-service:8001
+    depends_on:
+      - backend
+      - redis
+      - postgres
+
+  celery-beat:
+    build: ./backend
+    command: celery -A app.workers.celery_app.celery_app beat --loglevel=info
+    env_file:
+      - ./backend/.env.example
+    environment:
+      DATABASE_URL: postgresql+asyncpg://fitme:fitme@postgres:5432/fitme
+      REDIS_URL: redis://redis:6379/0
+      SCRAPER_SERVICE_URL: http://scraper-service:8001
+    depends_on:
+      - celery-worker
+
+  scraper-service:
+    build: ./scraper-service
+    environment:
+      REDIS_URL: redis://redis:6379/1
+      USE_PROXY: "false"
+    ports:
+      - "8001:8001"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+volumes:
+  postgres_data:

@@ -1,0 +1,31 @@
+# Local dev dependencies for the FitMe backend (Postgres + Redis).
+# The FastAPI app itself is run separately with `uvicorn app.main:app --reload`
+# (see ../../../README.md at repo root for the full setup walkthrough).
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up -d
+version: "3.9"
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fitme
+      POSTGRES_PASSWORD: fitme
+      POSTGRES_DB: fitme
+    ports:
+      - "5432:5432"
+    volumes:
+      - fitme_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fitme"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  fitme_pg_data:

@@ -1,0 +1,10 @@
+{
+  "name": "fitme-extraction",
+  "platforms": ["ios", "android"],
+  "android": {
+    "modules": ["com.fitme.extraction.FitMeExtractionModule"]
+  },
+  "ios": {
+    "modules": ["FitMeExtractionModule"]
+  }
+}

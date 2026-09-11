@@ -1,0 +1,264 @@
+import asyncio
+import re
+import urllib.parse
+import uuid
+
+from fastapi import APIRouter, Depends, File, UploadFile
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db
+from app.models.garment import Garment
+from app.schemas.product import CompareResultResponse, CompareStartResponse, ProductFromExtensionRequest, ProductFromUrlRequest, ProductResponse
+from app.services.garment_analysis import analyse_garment
+from app.services.price_comparison import compare_prices
+from app.services.product_scraper import scrape_product
+from app.services.vision_extractor import extract_product_from_image
+from app.utils.validators import validate_image_upload
+
+router = APIRouter(prefix="/api/v1/product", tags=["product"])
+comparison_store: dict[str, list[dict]] = {}
+
+# In-memory lock for concurrency within the current FastAPI / Uvicorn process.
+# Note: For multi-worker, multi-process, or clustered deployments, this in-memory lock
+# is not shared across OS processes. Under current local/single-process deployment,
+# asyncio.Lock combined with double-checked DB lookup prevents race-condition duplicate inserts.
+_garment_creation_lock = asyncio.Lock()
+
+
+def get_canonical_product_identity(url: str) -> tuple[str, str, str]:
+    """Extracts (platform, stable_product_identifier, clean_canonical_url) from a retailer URL.
+
+    Rules:
+      - Removes tracking query params (utm_*, gclid, gbraid, gad_source, fbclid, ref, etc.) and fragments.
+      - Extracts stable retailer style/product identifiers (e.g. Myntra style_id, Amazon ASIN, Ajio code).
+      - Never relies on product_name or loose fuzzy matching.
+    """
+    if not url or not isinstance(url, str):
+        return ("unknown", "", "")
+
+    raw_url = url.strip()
+    try:
+        parsed = urllib.parse.urlparse(raw_url)
+        host = (parsed.netloc or "").lower()
+        if host.startswith("www."):
+            host = host[4:]
+
+        path = parsed.path or ""
+
+        # 1. Myntra: style ID in path (6-10 digits)
+        if "myntra.com" in host:
+            style_match = re.search(r"/(\d{6,10})(?:/buy|\.html|/|$|\?)", path) or re.search(r"(\d{6,10})", path)
+            style_id = style_match.group(1) if style_match else ""
+            clean_path = re.sub(r"/buy/?$", "", path).rstrip("/")
+            clean_url = f"https://www.myntra.com{clean_path}" if clean_path else raw_url.split("?")[0].split("#")[0]
+            return ("myntra", style_id, clean_url)
+
+        # 2. Amazon: 10-character alphanumeric ASIN
+        if "amazon." in host:
+            asin_match = re.search(r"/(?:dp|gp/product|d)/([A-Z0-9]{10})(?:/|$|\?)", path)
+            asin = asin_match.group(1) if asin_match else ""
+            clean_url = f"https://{parsed.netloc}/dp/{asin}" if asin else raw_url.split("?")[0].split("#")[0]
+            return ("amazon", asin, clean_url)
+
+        # 3. Ajio: Product code in path
+        if "ajio.com" in host:
+            ajio_match = re.search(r"/p/([a-zA-Z0-9_]+)(?:/|$|\?)", path)
+            code = ajio_match.group(1) if ajio_match else ""
+            clean_url = f"https://www.ajio.com/p/{code}" if code else raw_url.split("?")[0].split("#")[0]
+            return ("ajio", code, clean_url)
+
+        # 4. General clean URL: strip query parameters and fragments
+        clean_url = raw_url.split("?")[0].split("#")[0].rstrip("/")
+        return ("general", "", clean_url)
+
+    except Exception:
+        clean_url = raw_url.split("?")[0].split("#")[0].rstrip("/")
+        return ("general", "", clean_url)
+
+
+async def _lookup_existing_garment(
+    db: AsyncSession,
+    clean_url: str,
+    raw_url: str,
+    platform: str,
+    style_id: str,
+) -> Garment | None:
+    """Finds an existing Garment record by clean URL or verified stable retailer product identifier.
+    Orders by created_at.asc() to deterministically select the canonical oldest record.
+    """
+    if not clean_url and not raw_url:
+        return None
+
+    # 1. Exact match on clean canonical URL or original source URL
+    url_conditions = []
+    if clean_url:
+        url_conditions.extend([Garment.product_url == clean_url, Garment.scraped_from_url == clean_url])
+    if raw_url:
+        url_conditions.extend([Garment.product_url == raw_url, Garment.scraped_from_url == raw_url])
+
+    stmt = select(Garment).where(or_(*url_conditions)).order_by(Garment.created_at.asc())
+    existing = (await db.execute(stmt)).scalars().first()
+    if existing:
+        return existing
+
+    # 2. For Myntra/Amazon with verified style ID, match structured style ID pattern in path
+    if platform == "myntra" and style_id:
+        stmt_style = (
+            select(Garment)
+            .where(
+                or_(
+                    Garment.scraped_from_url.contains(f"/{style_id}/"),
+                    Garment.scraped_from_url.contains(f"/{style_id}"),
+                    Garment.product_url.contains(f"/{style_id}/"),
+                    Garment.product_url.contains(f"/{style_id}"),
+                )
+            )
+            .order_by(Garment.created_at.asc())
+        )
+        existing = (await db.execute(stmt_style)).scalars().first()
+        if existing:
+            return existing
+
+    return None
+
+
+async def _create_garment_from_product(product: dict, db: AsyncSession) -> Garment:
+    source_url = product.get("source_url") or product.get("url") or ""
+    platform, style_id, clean_url = get_canonical_product_identity(source_url)
+
+    # 1. Fast-path lookup (no lock overhead for previously extracted products)
+    if source_url:
+        existing = await _lookup_existing_garment(db, clean_url, source_url, platform, style_id)
+        if existing:
+            return existing
+
+    # 2. Synchronized double-checked block for concurrent cold-starts within this process
+    async with _garment_creation_lock:
+        if source_url:
+            existing = await _lookup_existing_garment(db, clean_url, source_url, platform, style_id)
+            if existing:
+                return existing
+
+        # 3. Create new Garment row
+        title = product.get("title") or product.get("product_name") or "Scraped fashion product"
+        images = product.get("images") or []
+        normalized_images = [{"url": item, "angle": "front"} if isinstance(item, str) else item for item in images]
+        analysis = analyse_garment(title, product.get("garment_type"), normalized_images)
+        canonical_target_url = clean_url or source_url
+        garment = Garment(
+            id=uuid.uuid4(),
+            product_name=title,
+            product_url=canonical_target_url,
+            images=normalized_images,
+            garment_type=analysis["garment_type"],
+            segmentation_masks=analysis["segmentation_masks"],
+            fabric_type=analysis["fabric_type"],
+            dominant_colours=analysis["dominant_colours"],
+            is_ethnic=analysis["is_ethnic"],
+            scraped_from_url=canonical_target_url,
+        )
+        try:
+            db.add(garment)
+            await db.commit()
+            await db.refresh(garment)
+        except Exception as e:
+            await db.rollback()
+            print(f"Notice: Garment commit rollback fallback ({e})")
+            if source_url:
+                existing = await _lookup_existing_garment(db, clean_url, source_url, platform, style_id)
+                if existing:
+                    return existing
+        return garment
+
+
+
+@router.post("/from-url", response_model=ProductResponse)
+async def from_url(payload: ProductFromUrlRequest, db: AsyncSession = Depends(get_db)) -> ProductResponse:
+    # 1. Pre-scrape fast path: check if a complete matching Garment already exists in PostgreSQL
+    platform, style_id, clean_url = get_canonical_product_identity(payload.url)
+    existing = await _lookup_existing_garment(db, clean_url, payload.url, platform, style_id)
+    if existing and existing.images and len(existing.images) > 0:
+        product = {
+            "title": existing.product_name,
+            "brand": (existing.product_name.split()[0] if existing.product_name else "Fashion Garment"),
+            "price": "1499",
+            "garment_type": existing.garment_type,
+            "images": existing.images,
+            "url": existing.product_url or existing.scraped_from_url or payload.url,
+            "platform": platform,
+            "status": "fetched",
+            "fallback_required": False,
+        }
+        return ProductResponse(
+            product_id=existing.id,
+            status="fetched",
+            product=product,
+            fallback_required=False,
+        )
+
+    # 2. Cold path: invoke existing, frozen scraper engine exactly as before
+    product = await scrape_product(payload.url)
+    garment = await _create_garment_from_product({**product, "source_url": payload.url}, db)
+    return ProductResponse(
+        product_id=garment.id,
+        status=product.get("status", "fetched"),
+        product=product,
+        fallback_required=product.get("fallback_required", False),
+    )
+
+
+@router.post("/from-image", response_model=ProductResponse)
+async def from_image(image: UploadFile | None = File(default=None), image_url: str | None = None, db: AsyncSession = Depends(get_db)) -> ProductResponse:
+    image_bytes = await validate_image_upload(image) if image else None
+    product = extract_product_from_image(image_bytes=image_bytes, image_url=image_url)
+    garment = await _create_garment_from_product(product, db)
+    return ProductResponse(product_id=garment.id, status="fetched", product=product, fallback_required=False)
+
+
+@router.post("/extract-screenshot", response_model=dict)
+async def extract_screenshot(image: UploadFile = File(...)) -> dict:
+    image_bytes = await validate_image_upload(image)
+    product = extract_product_from_image(image_bytes=image_bytes, image_url=None)
+    return product
+
+
+@router.post("/from-extension", response_model=ProductResponse)
+async def from_extension(payload: ProductFromExtensionRequest, db: AsyncSession = Depends(get_db)) -> ProductResponse:
+    if payload.source_url:
+        platform, style_id, clean_url = get_canonical_product_identity(payload.source_url)
+        existing = await _lookup_existing_garment(db, clean_url, payload.source_url, platform, style_id)
+        if existing and existing.images and len(existing.images) > 0:
+            product = payload.model_dump()
+            product["title"] = payload.title
+            return ProductResponse(
+                product_id=existing.id,
+                status="fetched",
+                product={**product, "tryon_url": f"/tryon/{existing.id}"},
+                fallback_required=False,
+            )
+
+    product = payload.model_dump()
+    product["title"] = payload.title
+    garment = await _create_garment_from_product(product, db)
+    return ProductResponse(
+        product_id=garment.id,
+        status="fetched",
+        product={**product, "tryon_url": f"/tryon/{garment.id}"},
+        fallback_required=False,
+    )
+
+
+@router.post("/{id}/compare-prices", response_model=CompareStartResponse)
+async def start_compare(id: str, db: AsyncSession = Depends(get_db)) -> CompareStartResponse:
+    garment = await db.get(Garment, id)
+    product = {"title": garment.product_name if garment else "FitMe product", "brand": (garment.product_name.split()[0] if garment else "FitMe"), "garment_type": garment.garment_type if garment else "unknown"}
+    job_id, comparisons = await compare_prices(product)
+    comparison_store[str(job_id)] = comparisons
+    return CompareStartResponse(job_id=job_id, status="completed")
+
+
+@router.get("/{id}/compare-prices/{job_id}", response_model=CompareResultResponse)
+async def get_compare(id: str, job_id: str) -> CompareResultResponse:
+    return CompareResultResponse(status="completed" if job_id in comparison_store else "queued", comparisons=comparison_store.get(job_id, []))
+

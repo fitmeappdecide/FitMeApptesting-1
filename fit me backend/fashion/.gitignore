@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.env
+.venv/
+node_modules/
+.next/
+dist/
+build/
+.expo/
+.DS_Store
+

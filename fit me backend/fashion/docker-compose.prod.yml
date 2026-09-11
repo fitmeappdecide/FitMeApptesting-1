@@ -1,0 +1,26 @@
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    ports:
+      - "8000:8000"
+  celery-worker:
+    build: ./backend
+    restart: unless-stopped
+    command: celery -A app.workers.celery_app.celery_app worker --loglevel=info
+    env_file:
+      - ./backend/.env
+  celery-beat:
+    build: ./backend
+    restart: unless-stopped
+    command: celery -A app.workers.celery_app.celery_app beat --loglevel=info
+    env_file:
+      - ./backend/.env
+  scraper-service:
+    build: ./scraper-service
+    restart: unless-stopped
+    env_file:
+      - ./scraper-service/.env
+
