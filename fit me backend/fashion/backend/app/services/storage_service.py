@@ -18,14 +18,21 @@ def build_encrypted_storage_ref(prefix: str, filename: str) -> str:
 
 
 def cdn_url_for_private_ref(private_ref: str) -> str:
-    """Generate a CDN URL for a given private reference in Supabase Storage.
-    For Supabase, we ensure the bucket name appears exactly once in the public URL path.
+    """Generate a URL for a storage reference in Supabase Storage.
+    For private references (tryon_results, scans, user_photos), delegates to signed URL.
+    For public/catalog assets, returns public CDN URL.
     """
+    if any(private_ref.startswith(p) for p in ("tryon_results/", "scans/", "user_photos/")) or "/tryon_results/" in private_ref:
+        signed = create_signed_photo_url(private_ref)
+        if signed:
+            return signed
+
     bucket = settings.supabase_storage_bucket
     clean_ref = private_ref
     if clean_ref.startswith(f"{bucket}/"):
         clean_ref = clean_ref[len(bucket) + 1 :]
     return f"{settings.supabase_url}/storage/v1/object/public/{bucket}/{clean_ref}"
+
 
 
 LOCAL_STORAGE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "storage"))
@@ -312,7 +319,7 @@ def create_thumbnail(
 
 
 def create_signed_photo_url(storage_path: str, expires_in: int = 7200) -> str:
-    """Generate a time-limited signed URL for a user photo from storage with in-memory caching."""
+    """Generate a time-limited signed URL for a private user photo/result from storage with in-memory caching."""
     if not settings.supabase_url or not settings.supabase_service_key or not storage_path:
         return ""
 
@@ -324,8 +331,15 @@ def create_signed_photo_url(storage_path: str, expires_in: int = 7200) -> str:
 
     bucket_name = settings.supabase_storage_bucket
     clean_path = storage_path
-    if clean_path.startswith(f"{bucket_name}/"):
+    public_prefix = f"/storage/v1/object/public/{bucket_name}/"
+    if public_prefix in clean_path:
+        clean_path = clean_path.split(public_prefix, 1)[1]
+    elif f"/{bucket_name}/" in clean_path:
+        clean_path = clean_path.split(f"/{bucket_name}/", 1)[1]
+    elif clean_path.startswith(f"{bucket_name}/"):
         clean_path = clean_path[len(bucket_name) + 1 :]
+
+    clean_path = clean_path.split("?")[0]
 
     try:
         client = _get_supabase_client()
@@ -337,14 +351,57 @@ def create_signed_photo_url(storage_path: str, expires_in: int = 7200) -> str:
         elif isinstance(res, str):
             signed = res
         if signed:
+            if signed.startswith("/"):
+                signed = f"{settings.supabase_url}/storage/v1{signed}"
             _signed_url_cache[storage_path] = (signed, now + expires_in)
             return signed
         return ""
     except Exception as exc:
         print(f"Notice: Could not create signed URL for {storage_path}: {exc}")
-        fallback = f"{settings.supabase_url}/storage/v1/object/public/{bucket_name}/{clean_path}"
-        _signed_url_cache[storage_path] = (fallback, now + expires_in)
-        return fallback
+        # Strictly no public fallback for private user assets
+        return ""
+
+
+def sign_if_private(url_or_ref: str, expires_in: int = 7200) -> str:
+    """If the URL or reference refers to a private Supabase object (tryon_results/, scans/, user_photos/),
+    return a signed time-limited URL.
+    Product/catalog images, external CDN URLs, and data: URIs are preserved untouched.
+    """
+    if not url_or_ref or not isinstance(url_or_ref, str):
+        return ""
+    if url_or_ref.startswith("data:"):
+        return url_or_ref
+
+    bucket_name = settings.supabase_storage_bucket
+    public_prefix = f"/storage/v1/object/public/{bucket_name}/"
+
+    is_private = False
+    clean_path = url_or_ref
+
+    if public_prefix in clean_path:
+        clean_path = clean_path.split(public_prefix, 1)[1]
+        is_private = True
+    elif f"/{bucket_name}/" in clean_path:
+        clean_path = clean_path.split(f"/{bucket_name}/", 1)[1]
+        is_private = True
+    elif clean_path.startswith("tryon_results/") or clean_path.startswith("scans/") or clean_path.startswith("user_photos/"):
+        is_private = True
+    elif clean_path.startswith(f"{bucket_name}/"):
+        clean_path = clean_path[len(bucket_name) + 1 :]
+        is_private = True
+
+    # If already a signed Supabase URL with token query param, return as is
+    if is_private and "token=" in url_or_ref:
+        return url_or_ref
+
+    if is_private:
+        clean_path = clean_path.split("?")[0]
+        signed = create_signed_photo_url(clean_path, expires_in=expires_in)
+        if signed:
+            return signed
+
+    # Non-private or external catalog/merchant image (e.g. Amazon, Myntra, external CDN)
+    return url_or_ref
 
 
 def get_thumbnail_url_for_result(result_url: str) -> str:
@@ -353,10 +410,24 @@ def get_thumbnail_url_for_result(result_url: str) -> str:
         return ""
     if "/tryon_results/" in result_url:
         parts = result_url.rsplit("/tryon_results/", 1)
-        filename = parts[1]
+        filename = parts[1].split("?")[0]
         if not filename.startswith("thumb_") and (filename.endswith(".webp") or filename.endswith(".jpg")):
+            thumb_path = f"tryon_results/thumb_{filename}"
+            signed_thumb = create_signed_photo_url(thumb_path)
+            if signed_thumb:
+                return signed_thumb
             return f"{parts[0]}/tryon_results/thumb_{filename}"
-    return result_url
+    elif result_url.startswith("tryon_results/"):
+        filename = result_url[len("tryon_results/") :].split("?")[0]
+        if not filename.startswith("thumb_") and (filename.endswith(".webp") or filename.endswith(".jpg")):
+            thumb_path = f"tryon_results/thumb_{filename}"
+            signed_thumb = create_signed_photo_url(thumb_path)
+            if signed_thumb:
+                return signed_thumb
+            return thumb_path
+    return sign_if_private(result_url)
+
+
 
 
 

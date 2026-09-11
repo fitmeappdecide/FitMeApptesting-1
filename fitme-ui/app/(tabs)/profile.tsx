@@ -12,7 +12,8 @@ import { useUserStore } from '../../src/services/userStore';
 import { ProMemberBadge } from '../../src/components/ProMemberBadge';
 import * as ImagePicker from 'expo-image-picker';
 import { userApi } from '../../src/services/api';
-import { logout } from '../../src/firebase/auth';
+import { logout, deleteCurrentUserFromFirebase } from '../../src/firebase/auth';
+
 
 /* ─── Types ─────────────────────────────────────────── */
 
@@ -200,8 +201,10 @@ export default function Profile() {
                   onPress: async () => {
                     try {
                       await userApi.deleteAccount();
+                      await deleteCurrentUserFromFirebase();
                       await logout();
                       Alert.alert('Account Deleted', 'Your account and personal data have been permanently deleted.', [
+
                         { text: 'OK', onPress: () => router.replace('/login') },
                       ]);
                     } catch (e: any) {

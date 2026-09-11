@@ -104,3 +104,15 @@ export const logout = async () => {
     ]);
   } catch (_) {}
 };
+
+/** Delete current Firebase user if signed in via client SDK. */
+export const deleteCurrentUserFromFirebase = async () => {
+  try {
+    if (auth.currentUser) {
+      await auth.currentUser.delete();
+    }
+  } catch (err) {
+    console.log('Notice: Firebase client delete user notice:', err);
+  }
+};
+

@@ -45,3 +45,46 @@ def verify_token(token: str) -> dict:
             logger.error(f"Fallback JWT decode failed: {fallback_err}")
         
         raise ValueError(f"Invalid Firebase/Google ID token: {e}")
+
+
+def delete_firebase_user(email: str | None = None, uid: str | None = None) -> bool:
+    """
+    Deletes a user from Firebase Authentication.
+    Attempts deletion via uid if provided, otherwise looks up the user by email.
+    Safely handles cases where the user doesn't exist in Firebase or Firebase Admin is uninitialized.
+    Re-raises genuine API/network errors so callers can handle incomplete deletions.
+    """
+    if not firebase_admin._apps:
+        init_firebase()
+
+    if not firebase_admin._apps:
+        logger.warning("Firebase Admin not initialized; skipping Firebase Auth deletion.")
+        return True
+
+    target_uid = uid
+    if not target_uid and email:
+        try:
+            user_record = auth.get_user_by_email(email)
+            target_uid = user_record.uid
+        except auth.UserNotFoundError:
+            logger.info(f"Firebase user not found by email '{email}'; skipping deletion.")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to lookup Firebase user by email '{email}': {e}")
+            raise
+
+    if target_uid:
+        try:
+            auth.delete_user(target_uid)
+            logger.info(f"Successfully deleted Firebase user with UID: {target_uid}")
+            return True
+        except auth.UserNotFoundError:
+            logger.info(f"Firebase user with UID '{target_uid}' not found; already deleted.")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting Firebase user with UID '{target_uid}': {e}")
+            raise
+
+    return True
+
+

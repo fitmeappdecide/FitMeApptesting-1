@@ -454,13 +454,14 @@ async def history(
 
         first_url = j.result_image_urls[0] if (j.result_image_urls and len(j.result_image_urls) > 0) else None
         thumb_url = storage_service.get_thumbnail_url_for_result(first_url) if first_url else None
+        signed_image_urls = [storage_service.sign_if_private(u) for u in (j.result_image_urls or [])]
 
         items.append(
             TryOnHistoryItem(
                 id=j.id,
                 garment_id=j.garment_id,
                 status=j.status,
-                result_image_urls=j.result_image_urls or [],
+                result_image_urls=signed_image_urls,
                 thumbnail_url=thumb_url,
                 created_at=j.created_at,
                 is_saved=bool(j.is_saved),
@@ -674,12 +675,14 @@ async def get_tryon_detail(
         if isinstance(meta, dict):
             price_val = meta.get("price")
 
+    signed_results = [storage_service.sign_if_private(u) for u in (job.result_image_urls or [])]
+
     return TryOnDetailResponse(
         id=job.id,
         user_id=job.user_id,
         garment_id=job.garment_id,
         status=job.status,
-        result_image_urls=job.result_image_urls or [],
+        result_image_urls=signed_results,
         is_saved=bool(job.is_saved),
         saved_photo_id=job.saved_photo_id,
         saved_photo_name=job.saved_photo_name,
@@ -752,9 +755,12 @@ async def result(
         if garment and profile:
             size = recommend_size(profile, garment)
 
+    signed_results = [storage_service.sign_if_private(u) for u in (job.result_image_urls or [])]
+
     return TryOnResultResponse(
-        result_image_urls=job.result_image_urls,
+        result_image_urls=signed_results,
         fit_analysis={"cache_tier": job.cache_tier, "identity_lock": "ArcFace + IP-Adapter FaceID ready"},
         size_recommendation=size,
         processing_time_seconds=job.processing_time_seconds,
     )
+

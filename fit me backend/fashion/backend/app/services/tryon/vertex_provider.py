@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.services.storage_service import (
     build_encrypted_storage_ref,
     cdn_url_for_private_ref,
+    create_signed_photo_url,
     create_thumbnail,
     download_user_photo,
     optimize_tryon_result,
@@ -196,7 +197,8 @@ class VertexProvider(TryOnProvider):
                             upload_image_to_storage(canonical_bytes, storage_path)
                             upload_image_to_storage(thumb_bytes, thumb_storage_path)
 
-                            public_url = cdn_url_for_private_ref(storage_path)
+                            signed_res_url = create_signed_photo_url(storage_path, expires_in=7200)
+                            public_url = signed_res_url if signed_res_url else storage_path
                         except Exception as s_err:
                             print(f"Supabase storage upload notice ({s_err}), using instant high-res Data URI")
                             import base64

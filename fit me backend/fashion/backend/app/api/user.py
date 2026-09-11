@@ -102,9 +102,26 @@ async def delete_account(current_user: User = Depends(get_current_user), db: Asy
     except Exception as cascade_err:
         print(f"Notice: Cascade records cleanup warning ({cascade_err})")
 
-    # 3. Delete user record
+    # 3. Delete user from Firebase Auth
+    user_email = user.email
+    from app.core.firebase import delete_firebase_user
+    try:
+        if user_email:
+            delete_firebase_user(email=user_email)
+    except Exception as fb_err:
+        print(f"Notice: Firebase Auth deletion failed during account deletion: {fb_err}")
+        from app.api.deps import api_error
+        raise api_error(
+            status.HTTP_502_BAD_GATEWAY,
+            "FIREBASE_DELETION_FAILED",
+            f"Failed to delete Firebase authentication identity ({str(fb_err)}). Please retry.",
+            "फायरबेस प्रमाणीकरण हटाने में विफल रहा। कृपया पुनः प्रयास करें।"
+        )
+
+    # 4. Delete user record
     await db.delete(user)
     await db.commit()
 
     return {"status": "deleted", "message": "User account and all personal data permanently deleted."}
+
 
