@@ -7,7 +7,17 @@ from app.core.config import settings
 
 def init_firebase():
     if not firebase_admin._apps:
-        cred_path = settings.firebase_credentials_path
+        backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        gcp_key = os.path.join(backend_dir, "gcp-vertex-key.json")
+        gcp_key_env = os.environ.get("GCP_VERTEX_KEY_JSON") or os.environ.get("GOOGLE_CREDENTIALS_JSON")
+        if gcp_key_env and not os.path.exists(gcp_key):
+            try:
+                with open(gcp_key, "w") as f:
+                    f.write(gcp_key_env.strip())
+            except Exception as e:
+                logger.warning(f"Failed writing GCP key from environment: {e}")
+
+        cred_path = gcp_key if os.path.exists(gcp_key) else settings.firebase_credentials_path
         if cred_path and os.path.exists(cred_path):
             try:
                 cred = credentials.Certificate(cred_path)
@@ -16,7 +26,7 @@ def init_firebase():
             except Exception as e:
                 logger.error(f"Failed to initialize Firebase Admin SDK: {e}")
         else:
-            logger.warning("settings.firebase_credentials_path is not set or file does not exist. Firebase Admin SDK will use default application credentials if available, or may fail.")
+            logger.warning("Firebase credentials not found. Initializing with default application credentials.")
             try:
                 firebase_admin.initialize_app()
                 logger.info("Firebase Admin initialized using default credentials")

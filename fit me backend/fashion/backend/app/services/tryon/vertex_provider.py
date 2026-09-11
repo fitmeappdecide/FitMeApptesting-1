@@ -36,6 +36,17 @@ class VertexProvider(TryOnProvider):
         backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
         gcp_key = os.path.join(backend_dir, "gcp-vertex-key.json")
         creds_path = os.path.join(backend_dir, "firebase", "fitme-3ac94-firebase-adminsdk-fbsvc-5ec19c616f.json")
+
+        # Check if GCP key is provided via environment variable (e.g. on Railway)
+        gcp_key_env = os.environ.get("GCP_VERTEX_KEY_JSON") or os.environ.get("GOOGLE_CREDENTIALS_JSON")
+        if gcp_key_env and not os.path.exists(gcp_key):
+            try:
+                with open(gcp_key, "w") as f:
+                    f.write(gcp_key_env.strip())
+                print(f"✓ Written GCP Vertex credentials from environment to {gcp_key}")
+            except Exception as e:
+                print(f"Warning writing GCP credentials: {e}")
+
         if os.path.exists(gcp_key):
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = gcp_key
         elif os.path.exists(creds_path):
