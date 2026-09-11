@@ -31,6 +31,7 @@ export default function StyleDna() {
               key={i}
               style={[styles.colorDot, { backgroundColor: c }, selectedColors.includes(i) && styles.colorDotSelected]}
               onPress={() => toggle(selectedColors, setSelectedColors, i)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             />
           ))}
         </View>
@@ -81,7 +82,13 @@ export default function StyleDna() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  scroll: { paddingHorizontal: Spacing.xl, paddingBottom: Spacing.xxxl },
+  scroll: {
+    paddingHorizontal: Spacing.xl,
+    paddingBottom: Spacing.xxxl,
+    maxWidth: 600,
+    width: '100%',
+    alignSelf: 'center',
+  },
   sectionTitle: { fontSize: 15, fontWeight: '500', color: Colors.foreground, marginBottom: Spacing.md, marginTop: Spacing.xl },
   colorsRow: { flexDirection: 'row', gap: 12 },
   colorDot: { width: 36, height: 36, borderRadius: 18 },
@@ -101,6 +108,14 @@ const styles = StyleSheet.create({
   personalityLabel: { fontSize: 9, letterSpacing: 2, color: Colors.mutedForeground, textTransform: 'uppercase', marginBottom: 6 },
   personalityTitle: { fontFamily: 'serif', fontSize: 22, color: Colors.foreground, marginBottom: 6 },
   personalityBody: { fontSize: 13, color: Colors.mutedForeground, lineHeight: 20 },
-  primaryBtn: { backgroundColor: Colors.primary, borderRadius: Radii.full, paddingVertical: 16, alignItems: 'center' },
+  primaryBtn: {
+    backgroundColor: Colors.primary,
+    borderRadius: Radii.full,
+    paddingVertical: 16,
+    alignItems: 'center',
+    maxWidth: 480,
+    width: '100%',
+    alignSelf: 'center',
+  },
   primaryBtnText: { color: Colors.primaryForeground, fontSize: 15, fontWeight: '500' },
 });

@@ -223,19 +223,21 @@ export default function Processing() {
         // Pre-cache the result image in background so result screen opens instantly
         if (result.result_image_urls && result.result_image_urls.length > 0) {
           const firstUrl = result.result_image_urls[0];
-          try {
-            const cacheFolder = `${FileSystem.cacheDirectory}fitme_img_cache/`;
-            const cleanUrl = firstUrl.split('?')[0];
-            let hash = 0;
-            for (let i = 0; i < cleanUrl.length; i++) {
-              hash = (hash << 5) - hash + cleanUrl.charCodeAt(i);
-              hash |= 0;
+          if (firstUrl && (firstUrl.startsWith('http://') || firstUrl.startsWith('https://'))) {
+            try {
+              const cacheFolder = `${FileSystem.cacheDirectory}fitme_img_cache/`;
+              const cleanUrl = firstUrl.split('?')[0];
+              let hash = 0;
+              for (let i = 0; i < cleanUrl.length; i++) {
+                hash = (hash << 5) - hash + cleanUrl.charCodeAt(i);
+                hash |= 0;
+              }
+              const ext = cleanUrl.split('.').pop() || 'jpg';
+              const localPath = `${cacheFolder}cached_${Math.abs(hash)}.${ext}`;
+              FileSystem.downloadAsync(firstUrl, localPath).catch(() => {});
+            } catch {
+              // Ignore pre-cache error
             }
-            const ext = cleanUrl.split('.').pop() || 'jpg';
-            const localPath = `${cacheFolder}cached_${Math.abs(hash)}.${ext}`;
-            FileSystem.downloadAsync(firstUrl, localPath).catch(() => {});
-          } catch {
-            // Ignore pre-cache error
           }
         }
 

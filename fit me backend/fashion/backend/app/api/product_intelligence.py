@@ -118,7 +118,7 @@ class AffiliateClickRequest(BaseModel):
 
 
 # ---------------- Helper functions ----------------
-def _thumbnail_sync(image_b64: str, max_side: int = 800) -> Optional[str]:
+def _thumbnail_sync(image_b64: str, max_side: int = 360) -> Optional[str]:
     try:
         import io
         from PIL import Image
@@ -129,13 +129,13 @@ def _thumbnail_sync(image_b64: str, max_side: int = 800) -> Optional[str]:
         if ratio < 1:
             img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=85)
+        img.save(buf, format="JPEG", quality=75)
         return base64.b64encode(buf.getvalue()).decode("ascii")
     except Exception:
         return None
 
 
-async def _thumbnail_async(image_b64: str, max_side: int = 800) -> Optional[str]:
+async def _thumbnail_async(image_b64: str, max_side: int = 360) -> Optional[str]:
     """Offloads PIL image resizing from the FastAPI event loop to the dedicated PI worker pool."""
     from app.core.ml_concurrency import pi_ml_manager
     return await pi_ml_manager.run_in_pool(_thumbnail_sync, image_b64, max_side)

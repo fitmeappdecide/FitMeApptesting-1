@@ -47,7 +47,7 @@ export default function Measurements() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  scroll: { paddingHorizontal: Spacing.xl, paddingBottom: Spacing.xxxl },
+  scroll: { paddingHorizontal: Spacing.xl, paddingBottom: Spacing.xxxl, maxWidth: 520, width: '100%', alignSelf: 'center' },
   desc: { fontSize: 13, color: Colors.mutedForeground, marginBottom: Spacing.xl, lineHeight: 20 },
   card: {
     backgroundColor: Colors.card, borderRadius: Radii.xl,
@@ -59,10 +59,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
   rowLabel: { fontSize: 14, color: Colors.foreground },
-  rowInput: { fontSize: 14, color: Colors.mutedForeground, textAlign: 'right' },
+  rowInput: { flex: 1, fontSize: 14, color: Colors.mutedForeground, textAlign: 'right', marginLeft: 16 },
   primaryBtn: {
     backgroundColor: Colors.primary, borderRadius: Radii.full,
-    paddingVertical: 16, alignItems: 'center',
+    paddingVertical: 16, alignItems: 'center', maxWidth: 520, width: '100%', alignSelf: 'center',
   },
   primaryBtnText: { color: Colors.primaryForeground, fontSize: 15, fontWeight: '500' },
 });

@@ -37,7 +37,7 @@ class AVAIntentParser:
                 "Analyze the user prompt and extract fashion intent, occasion, budget, platform constraints, style, and color.\n"
                 "Respond strictly in valid JSON matching this schema:\n"
                 "{\n"
-                '  "intent": "outfit_recommendation" | "make_cheaper" | "swap_item" | "price_comparison" | "try_on" | "complete_look" | "save_outfit" | "product_search",\n'
+                '  "intent": "outfit_recommendation" | "tryon_history" | "style_recent_tryon" | "fashion_advice" | "make_cheaper" | "swap_item" | "price_comparison" | "try_on" | "complete_look" | "save_outfit" | "product_search",\n'
                 '  "mode": "Stylist" | "Shopping Stylist" | "Shopping Action Agent",\n'
                 '  "occasion": "college" | "wedding" | "mehendi" | "sangeet" | "office" | "interview" | "party" | "date" | "travel" | "ethnic" | "casual",\n'
                 '  "style": "casual" | "minimal" | "streetwear" | "formal" | "ethnic" | "smart casual",\n'
@@ -164,7 +164,43 @@ class AVAIntentParser:
             style = "casual"
 
         # 8. Intent Actions
-        if "cheaper" in text or any(k in text for k in ["reduce price", "lower price", "less expensive"]):
+        # Priority 1: Try-On History
+        if any(k in text for k in [
+            "tryon history", "try on history", "try-on history", "past tryon", "past try-on", "past try on",
+            "previous tryon", "previous try-on", "previous try on", "recent tryon history",
+            "my tryons", "my try-ons", "my try ons", "show my tryon", "open my tryon", "see my tryon",
+            "view my tryon", "tryon gallery", "try-on gallery", "all my tryons", "open history", "try-on jobs", "try on jobs"
+        ]):
+            intent = "tryon_history"
+            needs_tryon = False
+
+        # Priority 2: Style Recent Try-On
+        elif (
+            any(k in text for k in [
+                "recent tryon", "recent try-on", "recent try on", "last tryon", "last try-on", "last try on",
+                "latest tryon", "latest try-on", "latest try on", "previous tryon", "past tryon"
+            ])
+            and any(k in text for k in [
+                "recommend", "product", "products", "item", "items", "match", "style", "pair",
+                "go with", "goes with", "outfit", "look", "complete", "wear with", "suggest", "accessories", "shoes"
+            ])
+        ):
+            intent = "style_recent_tryon"
+            needs_products = True
+
+        # Priority 3: Conversational Fashion Advice / Style Tips / Questions
+        elif (
+            any(k in text for k in [
+                "who are you", "what can you do", "what are you", "help me", "how does tryon work",
+                "how does virtual try on work", "how do you work", "how to style", "styling tips",
+                "fashion tips", "fashion advice", "what should i wear", "body shape", "color season",
+                "how should i dress", "how do i dress", "what suits", "guide me", "style advice"
+            ])
+            or (text in ["hi", "hello", "hey", "hola", "namaste", "good morning", "good evening", "what's up", "help"])
+        ) and not (bool(re.search(r'\b(?:under|rs\.?|inr|below|budget|buy|shop)\b', text)) or '₹' in text):
+            intent = "fashion_advice"
+
+        elif "cheaper" in text or any(k in text for k in ["reduce price", "lower price", "less expensive"]):
             intent = "make_cheaper"
             needs_products = True
 
@@ -180,7 +216,10 @@ class AVAIntentParser:
                     swap_target = target
                     break
 
-        elif any(k in text for k in ["try on", "try this", "virtual try on", "wear this on me", "try it on", "try"]) and ("outfit" in text or "try" in text or "me" in text or "on" in text):
+        elif (
+            any(k in text for k in ["try this on me", "try on me", "virtual try on", "try it on me", "wear this on me", "try this outfit", "try the first outfit", "try on this", "try outfit on"])
+            or (re.search(r'\btry\s+(?:this|it|outfit|first|on\s+me)\b', text) and not any(k in text for k in ["history", "recent", "past", "last", "latest"]))
+        ):
             intent = "try_on"
             needs_tryon = True
 
@@ -200,7 +239,7 @@ class AVAIntentParser:
         mode = "Stylist"
         if needs_products or platform or budget:
             mode = "Shopping Stylist"
-        if needs_tryon or needs_price_comparison:
+        if needs_tryon or needs_price_comparison or intent in ["tryon_history", "style_recent_tryon"]:
             mode = "Shopping Action Agent"
 
         return {

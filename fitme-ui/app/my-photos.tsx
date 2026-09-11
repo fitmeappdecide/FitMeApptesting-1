@@ -330,7 +330,7 @@ export default function MyPhotos() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  scroll:    { paddingHorizontal: Spacing.xl },
+  scroll:    { paddingHorizontal: Spacing.xl, maxWidth: 640, width: '100%', alignSelf: 'center' },
 
   // Privacy notice
   notice: {
@@ -435,6 +435,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.card,
     borderTopLeftRadius: Radii.xxl, borderTopRightRadius: Radii.xxl,
     paddingHorizontal: Spacing.xl, paddingBottom: 40, paddingTop: Spacing.md,
+    maxWidth: 480, width: '100%', alignSelf: 'center',
   },
   sheetHandle: {
     width: 36, height: 4, borderRadius: 2,
@@ -462,7 +463,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', paddingHorizontal: Spacing.xxl,
   },
   dialog: {
-    width: '100%', backgroundColor: Colors.card,
+    width: '100%', maxWidth: 420, backgroundColor: Colors.card,
     borderRadius: Radii.xxl, padding: Spacing.xxl, alignItems: 'center',
   },
   dialogTitle: { fontFamily: 'serif', fontSize: 20, color: Colors.foreground, marginBottom: Spacing.lg },

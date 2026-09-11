@@ -24,18 +24,54 @@ import { formatRetailerName } from "../src/constants/retailers";
 import { RetailerLogo } from "../src/components/RetailerLogo";
 
 function getComparisonImageUri(item: PIHistoryItem): string {
-  // 1. User's original uploaded image (stored on Supabase Storage CDN)
-  if (item.profile?.image_cdn_url) {
+  if (!item) return 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80';
+
+  // 1. Candidate product image matching the best retailer
+  if (item.candidates && item.candidates.length > 0) {
+    const bestCand = item.candidates.find(
+      (c) => c.retailer?.toLowerCase() === item.best_retailer?.toLowerCase()
+    );
+    const bestImg = bestCand?.image_url || (bestCand as any)?.imageUrl || (bestCand as any)?.image;
+    if (bestImg && typeof bestImg === 'string' && bestImg.trim().length > 0) {
+      return bestImg.trim();
+    }
+
+    // Any candidate with a valid image URL
+    for (const c of item.candidates) {
+      const candImg = c.image_url || (c as any)?.imageUrl || (c as any)?.image;
+      if (candImg && typeof candImg === 'string' && candImg.trim().length > 0) {
+        return candImg.trim();
+      }
+    }
+  }
+
+  // 2. User's original uploaded image thumbnail (Base64)
+  if (item.thumbnail_b64 && typeof item.thumbnail_b64 === 'string' && item.thumbnail_b64.trim().length > 0) {
+    const b64 = item.thumbnail_b64.trim();
+    return b64.startsWith('data:') ? b64 : `data:image/jpeg;base64,${b64}`;
+  }
+
+  // 3. User's original uploaded image (stored on Storage CDN or local)
+  if (item.profile?.image_cdn_url && typeof item.profile.image_cdn_url === 'string') {
     return item.profile.image_cdn_url;
   }
-
-  // 2. User's original uploaded image thumbnail (stored as Base64)
-  if (item.thumbnail_b64) {
-    return `data:image/jpeg;base64,${item.thumbnail_b64}`;
+  if (item.profile?.image_url && typeof item.profile.image_url === 'string') {
+    return item.profile.image_url;
   }
 
-  // 3. Fallback placeholder only if neither exists
-  return 'https://images.unsplash.com/photo-1572804013309-59a88b7e92f1?auto=format&fit=crop&w=800&q=85';
+  // 4. Direct item image fields
+  if ((item as any).image_url && typeof (item as any).image_url === 'string') {
+    return (item as any).image_url;
+  }
+  if ((item as any).thumbnail_url && typeof (item as any).thumbnail_url === 'string') {
+    return (item as any).thumbnail_url;
+  }
+  if ((item as any).garment_image_url && typeof (item as any).garment_image_url === 'string') {
+    return (item as any).garment_image_url;
+  }
+
+  // 5. High-quality fashion fallback
+  return 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80';
 }
 
 function getComparisonTitle(item: PIHistoryItem): string {

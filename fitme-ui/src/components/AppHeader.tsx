@@ -30,7 +30,7 @@ export function AppHeader({ title, back, onBack, right, showBell = true }: AppHe
     if (right !== undefined) return right; // caller controls it (including null = nothing)
     if (showBell && !back) {
       return (
-        <TouchableOpacity style={styles.iconBtn} activeOpacity={0.7}>
+        <TouchableOpacity style={styles.iconBtn} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <Ionicons name="notifications-outline" size={20} color={Colors.foreground} />
         </TouchableOpacity>
       );
@@ -42,7 +42,7 @@ export function AppHeader({ title, back, onBack, right, showBell = true }: AppHe
     <View style={styles.header}>
       <View style={styles.side}>
         {back && (
-          <TouchableOpacity onPress={handleBack} style={styles.iconBtn} activeOpacity={0.7}>
+          <TouchableOpacity onPress={handleBack} style={styles.iconBtn} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <Ionicons name="chevron-back" size={22} color={Colors.foreground} />
           </TouchableOpacity>
         )}
@@ -70,7 +70,8 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
   side: {
-    width: 40,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -66,21 +66,40 @@ function isTokenExpired(token: string): boolean {
 
 async function performTokenRefresh(): Promise<string> {
   if (refreshPromise) return refreshPromise;
-  if (!refreshToken) {
-    refreshToken = await SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
-  }
-  if (!refreshToken) {
-    await clearAuth();
-    throw new ApiError(401, 'Session expired. Please log in again.', 'SESSION_EXPIRED');
-  }
 
   refreshPromise = (async () => {
     try {
-      const refreshed = await request<{ access_token: string; token_type: string }>(
-        '/api/v1/auth/refresh',
-        { method: 'POST', body: JSON.stringify({ refresh_token: refreshToken }) },
-        false
-      );
+      if (!refreshToken) {
+        refreshToken = await SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
+      }
+      if (!refreshToken) {
+        await clearAuth();
+        throw new ApiError(401, 'Session expired. Please log in again.', 'SESSION_EXPIRED');
+      }
+
+      // Refresh directly without passing through request() to prevent circular token recursion
+      const timeoutMs = 15_000;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      let response: Response;
+      try {
+        response = await fetch(`${BASE_URL}/api/v1/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      if (!response.ok) {
+        await clearAuth();
+        throw new ApiError(401, 'Session expired. Please log in again.', 'SESSION_EXPIRED');
+      }
+
+      const refreshed = (await response.json()) as { access_token: string; token_type: string };
       accessToken = refreshed.access_token;
       await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, refreshed.access_token);
       return refreshed.access_token;
@@ -115,9 +134,9 @@ async function getValidAccessToken(): Promise<string | null> {
   }
   if (accessToken && isTokenExpired(accessToken) && refreshToken) {
     try {
-      await performTokenRefresh();
+      return await performTokenRefresh();
     } catch {
-      // Handled by refresh
+      return null;
     }
   }
   return accessToken;
@@ -233,7 +252,7 @@ export async function request<T>(endpoint: string, options: RequestOptions = {},
 
     console.log('Response status:', response.status);
   const respText = await response.text();
-  console.log('Response body (text):', respText);
+  console.log('Response body (text):', respText.length > 500 ? respText.substring(0, 500) + '... [truncated]' : respText);
   if (response.status === 204) return undefined as T;
   // Try to parse JSON if possible, otherwise return raw text
   try {
@@ -548,7 +567,7 @@ export const tryOnApi = {
 
   getDetail: (jobId: string) => request<TryOnDetailResponse>(`/api/v1/tryon/${jobId}/detail`),
 
-  getHistory: (params?: { limit?: number; status?: string; saved_only?: boolean; saved_photo_id?: string; page?: number }) => {
+  getHistory: (params?: { limit?: number; status?: string; saved_only?: boolean; saved_photo_id?: string; page?: number }, options?: RequestOptions) => {
     const queryParts: string[] = [];
     if (params?.limit) queryParts.push(`limit=${params.limit}`);
     if (params?.status) queryParts.push(`status=${encodeURIComponent(params.status)}`);
@@ -556,7 +575,11 @@ export const tryOnApi = {
     if (params?.saved_photo_id) queryParts.push(`saved_photo_id=${encodeURIComponent(params.saved_photo_id)}`);
     if (params?.page) queryParts.push(`page=${params.page}`);
     const qs = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
-    return request<TryOnHistoryItem[]>(`/api/v1/tryon/history${qs}`);
+    return request<TryOnHistoryItem[]>(`/api/v1/tryon/history${qs}`, {
+      timeoutMs: 6_000,
+      silentTimeout: true,
+      ...options,
+    });
   },
 
   toggleSave: (jobId: string) =>
@@ -787,13 +810,17 @@ export const productIntelligenceApi = {
     });
   },
 
-  getHistory: (params?: { limit?: number; status?: string; saved_only?: boolean }) => {
+  getHistory: (params?: { limit?: number; status?: string; saved_only?: boolean }, options?: RequestOptions) => {
     const queryParts: string[] = [];
     if (params?.limit) queryParts.push(`limit=${params.limit}`);
     if (params?.status) queryParts.push(`status=${encodeURIComponent(params.status)}`);
     if (params?.saved_only) queryParts.push(`saved_only=true`);
     const qs = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
-    return request<PIHistoryItem[]>(`/api/v1/product-intelligence/history${qs}`);
+    return request<PIHistoryItem[]>(`/api/v1/product-intelligence/history${qs}`, {
+      timeoutMs: 6_000,
+      silentTimeout: true,
+      ...options,
+    });
   },
 
   refreshPrices: (scanId: string) =>

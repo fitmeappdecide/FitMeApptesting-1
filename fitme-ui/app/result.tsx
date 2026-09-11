@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Image, ScrollView,
-  Modal, Dimensions, Alert, ActivityIndicator, Platform, Linking,
+  Modal, Alert, ActivityIndicator, Platform, Linking, useWindowDimensions,
 } from 'react-native';
 import { useRouter, useLocalSearchParams, Link } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -27,8 +27,6 @@ import {
 import { useLooksStore } from '../src/services/looksStore';
 import { openAffiliateProductUrl } from '../src/services/affiliate';
 
-
-const { width: windowWidth, height: windowHeight } = Dimensions.get('window');
 const FALLBACK_IMG =
   'https://images.unsplash.com/photo-1469334031218-e382a71b716b?auto=format&fit=crop&w=900&q=80';
 
@@ -85,6 +83,7 @@ function parseNumericPrice(priceStr?: string | number | null): number {
 // ─── component ──────────────────────────────────────────────────────────────
 
 export default function Result() {
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const params = useLocalSearchParams<{ jobId?: string; scanId?: string; autoCompare?: string }>();
   const sessionJobId = useSession((s) => s.tryOnJobId);
   const activeJobId = (params.jobId || sessionJobId) as string | undefined;
@@ -229,8 +228,10 @@ export default function Result() {
         } catch (scanErr) {
           console.warn('Scan status fetch error:', scanErr);
         }
-      } else {
-        // 2. URL-based exact product price comparison (isolated pipeline)
+      }
+
+      // 2. Fall back to URL-based exact product price comparison if no candidates from visual scan
+      if (!resolvedCandidates.length) {
         const targetUrl = shopUrl || detail?.product_url || extractedProduct?.sourceUrl;
         const targetTitle = productTitle !== 'Virtual Look' ? productTitle : undefined;
         const targetBrand = productBrand !== 'FitMe' ? productBrand : undefined;
@@ -459,7 +460,7 @@ export default function Result() {
         animated: false,
       });
     }, 50);
-  }, []);
+  }, [windowWidth]);
 
   const handleMomentumScrollEnd = useCallback((e: any) => {
     const pageIndex = Math.round(e.nativeEvent.contentOffset.x / windowWidth);
@@ -472,7 +473,7 @@ export default function Result() {
       youScrollRef.current?.scrollResponderZoomTo({ x: 0, y: 0, width: windowWidth, height: windowHeight, animated: false });
       setYouZoomScale(1);
     }
-  }, []);
+  }, [windowWidth, windowHeight]);
 
   const handleDotPress = useCallback((targetView: 'original' | 'you') => {
     setFsView(targetView);
@@ -480,7 +481,7 @@ export default function Result() {
       x: targetView === 'original' ? 0 : windowWidth,
       animated: true,
     });
-  }, []);
+  }, [windowWidth]);
 
   const handleDoubleTapPage = (page: 'you' | 'original', e: any) => {
     const now = Date.now();
@@ -526,7 +527,12 @@ export default function Result() {
         back
         onBack={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/looks'))}
         right={
-          <TouchableOpacity style={styles.iconBtn} onPress={handleShare} activeOpacity={0.7}>
+          <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={handleShare}
+            activeOpacity={0.7}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
             <Ionicons name="share-outline" size={20} color={Colors.foreground} />
           </TouchableOpacity>
         }
@@ -534,7 +540,7 @@ export default function Result() {
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* Main image */}
-        <View style={styles.imgWrap}>
+        <View style={[styles.imgWrap, { height: Math.min(windowHeight * 0.46, 500) }]}>
           {isLoadingDetail ? (
             <View style={styles.loaderWrap}>
               <ActivityIndicator size="large" color={Colors.accent} />
@@ -545,7 +551,12 @@ export default function Result() {
               style={styles.mainImg}
             />
           )}
-          <TouchableOpacity style={styles.eyeBtn} onPress={() => openFullscreen(view)} activeOpacity={0.7}>
+          <TouchableOpacity
+            style={styles.eyeBtn}
+            onPress={() => openFullscreen(view)}
+            activeOpacity={0.7}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
             <Ionicons name="eye-outline" size={18} color="#fff" />
           </TouchableOpacity>
         </View>
@@ -620,18 +631,6 @@ export default function Result() {
                 <Text style={styles.compareSubtitle}>Find the best deal for you</Text>
               </View>
             </View>
-            {comparisonState === 'results' && (
-              <TouchableOpacity
-                onPress={handleViewAllComparisons}
-                activeOpacity={0.7}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <View style={styles.viewAllRow}>
-                  <Text style={styles.viewAllText}>View all</Text>
-                  <Ionicons name="arrow-forward" size={12} color={Colors.accent} />
-                </View>
-              </TouchableOpacity>
-            )}
           </View>
 
           {/* STATE 1: INITIAL (Zero API calls) */}
@@ -720,26 +719,6 @@ export default function Result() {
                 })}
               </ScrollView>
 
-              {/* Prices update constantly banner */}
-              <View style={styles.trackPriceBanner}>
-                <View style={styles.trackPriceLeft}>
-                  <View style={styles.trackPriceIconCircle}>
-                    <Ionicons name="pricetag" size={15} color="#C86D51" />
-                  </View>
-                  <View style={styles.trackPriceTextCol}>
-                    <Text style={styles.trackPriceTitle}>Prices update constantly</Text>
-                    <Text style={styles.trackPriceSub}>You won't miss a better deal!</Text>
-                  </View>
-                </View>
-                <TouchableOpacity
-                  style={styles.trackPriceBtn}
-                  activeOpacity={0.8}
-                  onPress={() => {}}
-                >
-                  <Ionicons name="notifications-outline" size={13} color="#C86D51" />
-                  <Text style={styles.trackPriceBtnText}>Track price</Text>
-                </TouchableOpacity>
-              </View>
             </>
           )}
 
@@ -810,23 +789,7 @@ export default function Result() {
           </>
         )}
 
-
-        <TouchableOpacity
-          style={styles.primaryBtn}
-          onPress={async () => {
-            if (!isSaved && activeJobId) {
-              await handleToggleSave();
-            }
-            router.push('/(tabs)/looks');
-          }}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.primaryBtnText}>
-            {isSaved ? 'View in Looks' : 'Save to Looks'}
-          </Text>
-        </TouchableOpacity>
-
-        <View style={{ height: 100 }} />
+        <View style={{ height: 40 }} />
       </ScrollView>
 
       {/* ── Fullscreen 2-page horizontal swipe & zoomable modal ─────────────── */}
@@ -873,7 +836,7 @@ export default function Result() {
             style={styles.fsPager}
           >
             {/* Page 0: ORIGINAL */}
-            <View style={styles.fsPageContainer}>
+            <View style={[styles.fsPageContainer, { width: windowWidth }]}>
               <ScrollView
                 ref={originalScrollRef}
                 style={styles.fsScrollView}
@@ -889,13 +852,13 @@ export default function Result() {
                   onPress={(e) => handleDoubleTapPage('original', e)}
                   style={styles.fsTouchWrap}
                 >
-                  <Image source={{ uri: PRODUCT_IMG }} style={styles.fsImg} resizeMode="contain" />
+                  <Image source={{ uri: PRODUCT_IMG }} style={[styles.fsImg, { width: windowWidth }]} resizeMode="contain" />
                 </TouchableOpacity>
               </ScrollView>
             </View>
 
             {/* Page 1: ON YOU */}
-            <View style={styles.fsPageContainer}>
+            <View style={[styles.fsPageContainer, { width: windowWidth }]}>
               <ScrollView
                 ref={youScrollRef}
                 style={styles.fsScrollView}
@@ -911,7 +874,7 @@ export default function Result() {
                   onPress={(e) => handleDoubleTapPage('you', e)}
                   style={styles.fsTouchWrap}
                 >
-                  <Image source={{ uri: RESULT_IMG }} style={styles.fsImg} resizeMode="contain" />
+                  <Image source={{ uri: RESULT_IMG }} style={[styles.fsImg, { width: windowWidth }]} resizeMode="contain" />
                 </TouchableOpacity>
               </ScrollView>
             </View>
@@ -941,9 +904,9 @@ export default function Result() {
 
 const styles = StyleSheet.create({
   container:       { flex: 1, backgroundColor: Colors.background },
-  scroll:          { paddingHorizontal: Spacing.xl },
+  scroll:          { paddingHorizontal: Spacing.xl, maxWidth: 640, width: '100%', alignSelf: 'center' },
   iconBtn:         { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  imgWrap:         { borderRadius: Radii.xxl, overflow: 'hidden', height: windowHeight * 0.46, backgroundColor: Colors.muted, marginBottom: Spacing.lg, position: 'relative' },
+  imgWrap:         { borderRadius: Radii.xxl, overflow: 'hidden', backgroundColor: Colors.muted, marginBottom: Spacing.lg, position: 'relative' },
   loaderWrap:      { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
   mainImg:         { width: '100%', height: '100%', resizeMode: 'cover' },
   eyeBtn:          { position: 'absolute', top: 12, right: 12, width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
@@ -1028,11 +991,11 @@ const styles = StyleSheet.create({
   fsClose:         { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center', zIndex: 10 },
   fsLabel:         { fontSize: 10, letterSpacing: 3, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase' },
   fsPager:         { flex: 1, width: '100%' },
-  fsPageContainer: { width: windowWidth, height: '100%' },
+  fsPageContainer: { height: '100%' },
   fsScrollView:    { flex: 1, width: '100%' },
   fsScrollContent: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   fsTouchWrap:     { width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center' },
-  fsImg:           { width: windowWidth, height: '100%' },
+  fsImg:           { height: '100%' },
   fsDots:          { flexDirection: 'row', gap: 6, justifyContent: 'center', paddingVertical: Spacing.xxl },
   fsDot:           { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.3)' },
   fsDotActive:     { width: 24, backgroundColor: '#fff' },

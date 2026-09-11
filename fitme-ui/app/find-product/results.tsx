@@ -397,7 +397,11 @@ export default function FindProductResults() {
         <View style={styles.cardDetails}>
           <View style={styles.titleFavRow}>
             <Text style={styles.productTitle} numberOfLines={1}>{item.title}</Text>
-            <TouchableOpacity onPress={() => toggleFavorite(item.id)} activeOpacity={0.7}>
+            <TouchableOpacity
+              onPress={() => toggleFavorite(item.id)}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
               <Ionicons
                 name={favorites[item.id] ? 'heart' : 'heart-outline'}
                 size={18}
@@ -526,7 +530,14 @@ export default function FindProductResults() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: Spacing.xl, paddingTop: Spacing.xs, paddingBottom: Spacing.xxxl },
+  scrollContent: {
+    paddingHorizontal: Spacing.xl,
+    paddingTop: Spacing.xs,
+    paddingBottom: Spacing.xxxl,
+    maxWidth: 640,
+    width: '100%',
+    alignSelf: 'center',
+  },
 
   subheaderRow: {
     flexDirection: 'row',

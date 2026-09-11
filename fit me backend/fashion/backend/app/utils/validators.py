@@ -63,8 +63,17 @@ def extract_merchant_destination_url(url: str | None) -> str | None:
         return None
     u = url.strip()
 
+    # Clean markdown link syntax: [url](url) or url](url)
+    if "](" in u:
+        u = u.split("](")[-1]
+    u = u.lstrip("([< '\"").rstrip(")]> '\"")
+    if "]" in u:
+        u = u.split("]")[0]
+    if ")" in u:
+        u = u.split(")")[0]
+
     # 1. Check embedded direct merchant URL inside wrappers (e.g. amzn.urlgeni.us/https://www.amazon.in/...)
-    embedded_match = re.search(r'https?://(?:www\.)?(amazon\.in|myntra\.com|ajio\.com|flipkart\.com|nykaafashion\.com|tatacliq\.com|westside\.com|zara\.com|hm\.com)/[^\s"<>\'\\]+', u, re.IGNORECASE)
+    embedded_match = re.search(r'https?://(?:www\.)?(amazon\.in|myntra\.com|ajio\.com|flipkart\.com|nykaafashion\.com|tatacliq\.com|westside\.com|zara\.com|hm\.com)/[^\s"<>\'\\\]\[\)]+', u, re.IGNORECASE)
     if embedded_match:
         extracted = embedded_match.group(0)
         try:

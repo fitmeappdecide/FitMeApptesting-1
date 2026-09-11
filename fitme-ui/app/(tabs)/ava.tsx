@@ -7,6 +7,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { Colors, Spacing, Radii } from '../../src/constants/theme';
 
@@ -81,10 +82,11 @@ function AvaIcon({ size = 20, color = Colors.accent }: { size?: number; color?: 
 }
 
 const ACTION_CHIPS = [
+  'Open my tryon history',
+  'Recommend products to my recent tryon',
   'College outfit from Myntra under ₹2500',
   'Only AJIO. Ethnic wedding outfit under ₹5000',
   'Make the outfit cheaper',
-  'Try this on me',
   'Where is this cheapest?',
 ];
 
@@ -98,6 +100,8 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
 const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.8, 320);
 
 export default function Ava() {
+  const router = useRouter();
+  const { initialQuery } = useLocalSearchParams<{ initialQuery?: string }>();
   const [messages, setMessages] = useState<Msg[]>([WELCOME_MSG]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -150,6 +154,13 @@ export default function Ava() {
   useEffect(() => {
     loadInitialChatHistory();
   }, []);
+
+  // Handle deep link / navigation with initialQuery
+  useEffect(() => {
+    if (initialQuery && typeof initialQuery === 'string' && initialQuery.trim()) {
+      handleSend(initialQuery.trim());
+    }
+  }, [initialQuery]);
 
   const loadInitialChatHistory = async () => {
     try {
@@ -349,7 +360,11 @@ export default function Ava() {
   };
 
   const handleAction = (actionText: string, outfit?: AVAOutfitCard) => {
-    if (actionText === 'TRY_ON' || actionText.toLowerCase().includes('try')) {
+    if (actionText === 'OPEN_HISTORY' || actionText.toLowerCase().includes('open full history') || actionText.toLowerCase().includes('full history')) {
+      router.push('/history');
+    } else if (actionText === 'STYLE_THIS' || actionText.toLowerCase().includes('style my latest try-on') || actionText.toLowerCase().includes('style this')) {
+      handleSend('Recommend some products to to my recent tryon');
+    } else if (actionText === 'TRY_ON' || actionText.toLowerCase().includes('try')) {
       Alert.alert('Virtual Try-On', `Launching Try-On for ${outfit?.name || 'this outfit'}...`, [
         { text: 'OK', onPress: () => handleSend('Try the first outfit on me') },
       ]);
@@ -616,6 +631,17 @@ export default function Ava() {
 
                         {outfit.reason && <Text style={styles.reasonText}>{outfit.reason}</Text>}
 
+                        {/* Inline Virtual Try-On Result Preview */}
+                        {(outfit as any).tryon_image_url && (
+                          <View style={styles.tryonPreviewContainer}>
+                            <Text style={styles.tryonPreviewHeader}>✨ VIRTUAL TRY-ON PREVIEW</Text>
+                            <SafeProductImage
+                              uri={(outfit as any).tryon_image_url}
+                              style={styles.tryonPreviewImage}
+                            />
+                          </View>
+                        )}
+
                         {/* Horizontal Fashion Products Visual Cards Carousel */}
                         <ScrollView
                           horizontal
@@ -650,10 +676,17 @@ export default function Ava() {
                                 }
                               }}
                             >
-                              <SafeProductImage
-                                uri={item.image || item.image_url}
-                                style={styles.productVisualImage}
-                              />
+                              <View style={{ position: 'relative' }}>
+                                <SafeProductImage
+                                  uri={item.image || item.image_url}
+                                  style={styles.productVisualImage}
+                                />
+                                {(item as any).slot && (
+                                  <View style={styles.slotBadge}>
+                                    <Text style={styles.slotBadgeText}>{(item as any).slot}</Text>
+                                  </View>
+                                )}
+                              </View>
                               <View style={styles.productVisualMeta}>
                                 <Text style={styles.productVisualTitle} numberOfLines={1}>
                                   {item.title || item.name || 'Fashion Item'}
@@ -668,6 +701,26 @@ export default function Ava() {
 
                         {/* Outfit Actions */}
                         <View style={styles.cardActionsRow}>
+                          {outfit.actions?.includes('STYLE_THIS') && (
+                            <TouchableOpacity
+                              style={[styles.cardBtn, { backgroundColor: '#1A1A1A' }]}
+                              onPress={() => handleAction('STYLE_THIS', outfit)}
+                            >
+                              <Ionicons name="sparkles" size={14} color="#FFF" />
+                              <Text style={styles.tryOnBtnText}>Style This</Text>
+                            </TouchableOpacity>
+                          )}
+
+                          {outfit.actions?.includes('OPEN_HISTORY') && (
+                            <TouchableOpacity
+                              style={[styles.cardBtn, { backgroundColor: '#F0EAE1', borderColor: '#D9CEBF', borderWidth: 1 }]}
+                              onPress={() => handleAction('OPEN_HISTORY', outfit)}
+                            >
+                              <Ionicons name="time-outline" size={14} color={Colors.foreground} />
+                              <Text style={[styles.shopBtnText, { color: Colors.foreground }]}>Full History</Text>
+                            </TouchableOpacity>
+                          )}
+
                           <TouchableOpacity
                             style={[styles.cardBtn, styles.tryOnBtn]}
                             onPress={() => handleAction('TRY_ON', outfit)}
@@ -703,6 +756,43 @@ export default function Ava() {
                       </View>
                     ))}
                   </View>
+                )}
+
+                {/* Suggested Action Pills returned by AVA */}
+                {m.actions && m.actions.length > 0 && (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={{ marginTop: 10 }}
+                    contentContainerStyle={{ gap: 8, paddingHorizontal: 4 }}
+                  >
+                    {m.actions.map((act, actIdx) => (
+                      <TouchableOpacity
+                        key={actIdx}
+                        style={{
+                          backgroundColor: '#FFFFFF',
+                          paddingHorizontal: 12,
+                          paddingVertical: 7,
+                          borderRadius: Radii.pill,
+                          borderWidth: 1,
+                          borderColor: '#E8E1D5',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 5,
+                        }}
+                        onPress={() => handleAction(act)}
+                      >
+                        <Ionicons
+                          name={act.toLowerCase().includes('history') ? 'time-outline' : (act.toLowerCase().includes('try') ? 'body-outline' : 'sparkles-outline')}
+                          size={13}
+                          color={Colors.foreground}
+                        />
+                        <Text style={{ fontSize: 12, color: Colors.foreground, fontWeight: '500' }}>
+                          {act}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
                 )}
               </View>
             ))}
@@ -1128,6 +1218,46 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: Colors.mutedForeground,
     marginTop: 2,
+  },
+  slotBadge: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    backgroundColor: 'rgba(28, 25, 23, 0.78)',
+    borderRadius: Radii.sm,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    zIndex: 10,
+  },
+  slotBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#FFF',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  tryonPreviewContainer: {
+    marginTop: 8,
+    marginBottom: 6,
+    borderRadius: Radii.lg,
+    overflow: 'hidden',
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.accent + '40',
+  },
+  tryonPreviewHeader: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+    color: Colors.accent,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: Colors.accent + '15',
+  },
+  tryonPreviewImage: {
+    width: '100%',
+    height: 280,
+    backgroundColor: Colors.muted,
   },
 
   cardActionsRow: { flexDirection: 'row', gap: 8, marginTop: 6 },

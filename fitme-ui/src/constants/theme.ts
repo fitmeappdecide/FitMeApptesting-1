@@ -32,6 +32,7 @@ export const Radii = {
   xl: 20,
   xxl: 24,
   full: 999,
+  pill: 999,
 };
 
 export const Spacing = {

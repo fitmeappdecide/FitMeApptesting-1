@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  Alert, Dimensions, NativeSyntheticEvent, NativeScrollEvent,
+  Alert, useWindowDimensions, NativeSyntheticEvent, NativeScrollEvent,
   Platform, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -9,9 +9,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { AppHeader } from '../src/components/AppHeader';
 import { Colors, Spacing, Radii } from '../src/constants/theme';
 import { useUserStore } from '../src/services/userStore';
-
-const { width: SCREEN_W } = Dimensions.get('window');
-
 
 /* ─── Feature row component ─────────────────────────── */
 
@@ -42,6 +39,7 @@ const fStyles = StyleSheet.create({
 /* ─── Main screen ───────────────────────────────────── */
 
 export default function Subscription() {
+  const { width: SCREEN_W } = useWindowDimensions();
   const { isPremium, setPremium } = useUserStore();
   const scrollRef  = useRef<ScrollView>(null);
   const [activePg, setActivePg] = useState(0);
@@ -331,6 +329,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.card,
     borderRadius: Radii.xxl,
     padding: Spacing.xl,
+    maxWidth: 440,
+    width: '100%',
+    alignSelf: 'center',
     borderWidth: 1,
     borderColor: Colors.border,
     shadowColor: Colors.foreground,
@@ -426,6 +427,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.card, borderRadius: Radii.xl,
     borderWidth: 1, borderColor: Colors.border, overflow: 'hidden',
     marginHorizontal: Spacing.xl, marginBottom: Spacing.lg,
+    maxWidth: 440, width: '100%', alignSelf: 'center',
   },
   menuRowBorder: {
     flexDirection: 'row', alignItems: 'center', gap: 12,

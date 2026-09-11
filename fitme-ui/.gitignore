@@ -12,6 +12,7 @@ android/build/
 *.env.local
 npm-debug.*
 *.jks
+*.keystore
 *.p8
 *.p12
 *.key

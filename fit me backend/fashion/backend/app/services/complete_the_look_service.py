@@ -26,6 +26,7 @@ import os
 import re
 import time
 import uuid
+import httpx
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote_plus, unquote
 from app.utils.validators import extract_merchant_destination_url, extract_best_candidate_url, is_direct_merchant_product_url
@@ -657,18 +658,33 @@ async def _fetch_gemini_grounded_candidates(
         else:
             site_instruction = "Search Myntra India (myntra.com) for real, currently available products."
 
-        budget_part = f" Budget under Rs {max_price:.0f}." if max_price else ""
+        budget_part = f" Total ensemble budget under Rs {max_price:.0f}." if max_price else ""
+        is_full_look = any(k in query.lower() for k in ["outfit", "look", "ensemble", "styling", "wedding", "college", "office", "party", "date"])
 
-        prompt = (
-            f"{site_instruction} Find 4 {query}.{budget_part}\n\n"
-            "For each product, provide the real direct product page URL (not search/category page).\n"
-            "Format:\n"
-            "1. [Product Title] | Rs [price] | [full product URL]\n"
-            "2. [Product Title] | Rs [price] | [full product URL]\n"
-            "3. [Product Title] | Rs [price] | [full product URL]\n"
-            "4. [Product Title] | Rs [price] | [full product URL]\n\n"
-            "Only include URLs found via Google Search — do NOT invent or fabricate product URLs."
-        )
+        if is_full_look:
+            budget_str = f" under Rs {max_price:.0f}" if max_price else ""
+            prompt = (
+                f"{site_instruction} Find 4 matching fashion items for a {query} look{budget_str} (such as dress/saree/kurta, footwear/heels, bag/clutch, jewelry/earrings).\n\n"
+                "For each product, provide the real direct product page URL (e.g. myntra.com/...).\n"
+                "Format:\n"
+                "1. [Product Title] | Rs [price] | [full direct product URL]\n"
+                "2. [Product Title] | Rs [price] | [full direct product URL]\n"
+                "3. [Product Title] | Rs [price] | [full direct product URL]\n"
+                "4. [Product Title] | Rs [price] | [full direct product URL]\n\n"
+                "Only include real URLs found via Google Search — do NOT invent or fabricate product URLs."
+            )
+        else:
+            budget_str = f" Budget under Rs {max_price:.0f}." if max_price else ""
+            prompt = (
+                f"{site_instruction} Find 4 {query}.{budget_str}\n\n"
+                "For each product, provide the real direct product page URL (not search/category page).\n"
+                "Format:\n"
+                "1. [Product Title] | Rs [price] | [full product URL]\n"
+                "2. [Product Title] | Rs [price] | [full product URL]\n"
+                "3. [Product Title] | Rs [price] | [full product URL]\n"
+                "4. [Product Title] | Rs [price] | [full product URL]\n\n"
+                "Only include URLs found via Google Search — do NOT invent or fabricate product URLs."
+            )
 
         # ── Direct REST API call — bypasses SDK 60s deadline ──
         api_url = (
@@ -688,10 +704,10 @@ async def _fetch_gemini_grounded_candidates(
         }
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as http:
+            async with httpx.AsyncClient(timeout=75.0) as http:
                 r = await http.post(api_url, json=payload, headers=headers)
         except Exception as http_err:
-            logger.warning(f"[GeminiGrounding] REST call error: {http_err}")
+            logger.warning(f"[GeminiGrounding] REST call error: {type(http_err).__name__}: {http_err}")
             return []
 
         if r.status_code != 200:
@@ -723,7 +739,14 @@ async def _fetch_gemini_grounded_candidates(
         for m in num_pattern.finditer(text):
             title = m.group(1).strip().rstrip("*").strip()
             price_str = m.group(2).replace(",", "")
-            url = m.group(3).strip().rstrip(".,;)\"'")
+            url = m.group(3).strip()
+            if "](" in url:
+                url = url.split("](")[-1]
+            url = url.lstrip("([< '\"").rstrip(".,;)]> '\"")
+            if "]" in url:
+                url = url.split("]")[0]
+            if ")" in url:
+                url = url.split(")")[0]
             try:
                 price = float(price_str)
             except Exception:

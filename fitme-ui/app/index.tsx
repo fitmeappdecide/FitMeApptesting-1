@@ -5,21 +5,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logo } from '../src/components/Logo';
 import { Colors, Spacing } from '../src/constants/theme';
 import { loadStoredAuth } from '../src/services/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function SplashScreen() {
   const router = useRouter();
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const fadeAnim = useRef(new Animated.Value(1)).current;
   const loaderAnim = useRef(new Animated.Value(-1)).current;
 
   useEffect(() => {
     // Immediately preload auth tokens into memory so downstream components have credentials ready
     loadStoredAuth().catch(() => {});
-
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 800,
-      useNativeDriver: true,
-    }).start();
 
     Animated.loop(
       Animated.timing(loaderAnim, {
@@ -30,9 +25,17 @@ export default function SplashScreen() {
     ).start();
 
     const timer = setTimeout(async () => {
-      const loggedIn = await loadStoredAuth();
-      router.replace(loggedIn ? '/(tabs)/home' : '/onboarding');
-    }, 2200);
+      try {
+        const hasOnboarded = await AsyncStorage.getItem('@fitme_has_onboarded');
+        if (!hasOnboarded) {
+          router.replace('/onboarding');
+          return;
+        }
+      } catch (e) {
+        console.warn('[Splash] Failed to read onboarding flag:', e);
+      }
+      router.replace('/(tabs)/home');
+    }, 800);
 
     return () => clearTimeout(timer);
   }, []);

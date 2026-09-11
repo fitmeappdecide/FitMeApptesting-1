@@ -9,3 +9,6 @@ result.txt
 build/
 dist/
 .idea/
+*vertex-key*.json
+*adminsdk*.json
+

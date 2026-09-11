@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, Image, Alert, ScrollView,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { AppHeader } from '../src/components/AppHeader';
@@ -17,6 +17,7 @@ const guideCloseup  = require('../assets/images/half.png');
 
 export default function UploadPhoto() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const sessionLocalPhotoUri = useSession((s) => s.localPhotoUri);
   const setLocalPhotoUri = useSession((s) => s.setLocalPhotoUri);
   const savedPhotoId = useSession((s) => s.savedPhotoId);
@@ -221,17 +222,17 @@ export default function UploadPhoto() {
           </View>
         )}
 
-        {/* Continue Button */}
+      </ScrollView>
+      <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
         <TouchableOpacity
           style={[styles.continueBtn, !photoUri && styles.continueBtnDisabled]}
           onPress={handleContinue}
           disabled={!photoUri}
+          activeOpacity={0.85}
         >
           <Text style={styles.continueBtnText}>Continue</Text>
         </TouchableOpacity>
-
-        <View style={{ height: 40 }} />
-      </ScrollView>
+      </View>
     </SafeAreaView>
   );
 }
@@ -239,42 +240,42 @@ export default function UploadPhoto() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: Spacing.xl, paddingBottom: Spacing.xxl },
-  privacyNote: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: Spacing.xl, marginTop: Spacing.xs },
+  scrollContent: { paddingHorizontal: Spacing.xl, paddingBottom: Spacing.lg },
+  privacyNote: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: Spacing.md, marginTop: Spacing.xs },
   privacyText: { fontSize: 12, color: Colors.mutedForeground },
   uploadArea: {
-    width: '100%', aspectRatio: 3 / 4, backgroundColor: Colors.muted, borderRadius: Radii.xxl,
-    alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.xl, gap: 8, overflow: 'hidden',
+    width: '100%', height: 450, backgroundColor: Colors.muted, borderRadius: Radii.xxl,
+    alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.md, gap: 8, overflow: 'hidden',
   },
   previewImg: { ...StyleSheet.absoluteFillObject, resizeMode: 'cover' },
   cameraCircle: {
-    width: 64, height: 64, borderRadius: 32,
+    width: 56, height: 56, borderRadius: 28,
     backgroundColor: Colors.border, alignItems: 'center', justifyContent: 'center',
   },
-  uploadTitle: { fontFamily: 'serif', fontSize: 20, color: Colors.foreground },
+  uploadTitle: { fontFamily: 'serif', fontSize: 18, color: Colors.foreground },
   uploadSub: { fontSize: 12, color: Colors.mutedForeground },
   errorText: { fontSize: 12, color: Colors.destructive, marginBottom: Spacing.md, textAlign: 'center' },
-  btnsRow: { flexDirection: 'row', gap: 12, marginBottom: Spacing.xl },
+  btnsRow: { flexDirection: 'row', gap: 12, marginBottom: Spacing.md },
   outlineBtn: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
     borderRadius: Radii.full, borderWidth: 1, borderColor: Colors.border,
-    backgroundColor: Colors.card, paddingVertical: 13,
+    backgroundColor: Colors.card, paddingVertical: 12,
   },
-  outlineBtnText: { fontSize: 13, color: Colors.foreground },
+  outlineBtnText: { fontSize: 13, color: Colors.foreground, fontWeight: '500' },
 
   // Saved photos strip
-  savedSection: { marginBottom: Spacing.xl },
-  savedHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  savedSection: { marginBottom: Spacing.md },
+  savedHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   savedSectionTitle: { fontSize: 13, fontWeight: '600', color: Colors.foreground },
   manageLink: { fontSize: 12, color: Colors.accent, fontWeight: '500' },
-  savedScroll: { gap: 12 },
+  savedScroll: { gap: 10 },
   savedCard: {
-    width: 116, height: 156, borderRadius: Radii.xl, overflow: 'hidden',
+    width: 104, height: 140, borderRadius: Radii.xl, overflow: 'hidden',
     backgroundColor: Colors.muted, position: 'relative',
     borderWidth: 1.5, borderColor: Colors.border,
   },
   savedCardSelected: { borderColor: Colors.primary, borderWidth: 2.5 },
-  savedImg: { width: '100%', height: 120, resizeMode: 'cover' },
+  savedImg: { width: '100%', height: 106, resizeMode: 'cover' },
   selectedBadge: {
     position: 'absolute', top: 6, right: 6,
     width: 22, height: 22, borderRadius: 11,
@@ -298,14 +299,35 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.destructive, borderRadius: 20, paddingHorizontal: 7, paddingVertical: 3,
   },
   badgeText: { fontSize: 9, color: '#fff', fontWeight: '600' },
+  bottomBar: {
+    paddingHorizontal: Spacing.xl,
+    paddingTop: 12,
+    backgroundColor: Colors.background,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.border,
+  },
   continueBtn: {
-    backgroundColor: Colors.primary, borderRadius: Radii.full, paddingVertical: 16, alignItems: 'center', width: '100%'
+    backgroundColor: Colors.primary,
+    borderRadius: Radii.full,
+    paddingVertical: 16,
+    alignItems: 'center',
+    width: '100%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   continueBtnDisabled: {
     backgroundColor: Colors.muted,
+    shadowOpacity: 0,
+    elevation: 0,
   },
   continueBtnText: {
-    color: Colors.primaryForeground, fontSize: 15, fontWeight: '500'
+    color: Colors.primaryForeground,
+    fontSize: 16,
+    fontWeight: '600',
+    letterSpacing: 0.3,
   },
 });
 

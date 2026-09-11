@@ -90,7 +90,13 @@ export default function Signup() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  scroll: { padding: Spacing.xl, paddingBottom: Spacing.xxxl },
+  scroll: {
+    padding: Spacing.xl,
+    paddingBottom: Spacing.xxxl,
+    maxWidth: 460,
+    width: '100%',
+    alignSelf: 'center',
+  },
   logoBlock: { alignItems: 'center', marginTop: Spacing.xxl, marginBottom: Spacing.xxxl },
   subtitle: { fontSize: 14, color: Colors.mutedForeground, marginTop: 6 },
   form: { gap: 4 },

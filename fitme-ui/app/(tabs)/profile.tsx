@@ -434,7 +434,7 @@ export default function Profile() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  scroll:    { paddingHorizontal: Spacing.xl },
+  scroll:    { paddingHorizontal: Spacing.xl, maxWidth: 640, width: '100%', alignSelf: 'center' },
 
   /* Identity card */
   identityCard: {
@@ -579,6 +579,7 @@ const styles = StyleSheet.create({
   },
   modalCard: {
     width: '100%',
+    maxWidth: 420,
     backgroundColor: Colors.card,
     borderRadius: Radii.xxl,
     padding: Spacing.xxl,
@@ -620,6 +621,9 @@ const styles = StyleSheet.create({
     borderTopRightRadius: Radii.xxl,
     paddingTop: Spacing.xl,
     paddingBottom: Platform.OS === 'ios' ? 40 : Spacing.xxl,
+    maxWidth: 480,
+    width: '100%',
+    alignSelf: 'center',
   },
   actionSheetTitle: {
     fontSize: 13,

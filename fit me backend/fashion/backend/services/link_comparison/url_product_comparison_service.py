@@ -43,6 +43,39 @@ RETAILER_DOMAINS: Dict[str, str] = {
     "snitch.com": "snitch",
     "bewakoof.com": "bewakoof",
     "theanouk.com": "anouk",
+    "jiomart.com": "jiomart",
+    "limeroad.com": "limeroad",
+    "cilory.com": "cilory",
+    "urbanic.com": "urbanic",
+    "littleboxindia.com": "littlebox",
+    "littlebox.in": "littlebox",
+    "indianrani.com": "indianrani",
+    "firstcry.com": "firstcry",
+    "snapdeal.com": "snapdeal",
+    "clovia.com": "clovia",
+    "zivame.com": "zivame",
+    "trendia.co": "trendia",
+    "fashor.com": "fashor",
+    "street9.com": "street9",
+    "berrylush.com": "berrylush",
+    "bairaj.com": "bairaj",
+    "soch.com": "soch",
+    "fabindia.com": "fabindia",
+    "biba.in": "biba",
+    "wforwoman.com": "wforwoman",
+    "aurelia.com": "aurelia",
+    "marksandspencer.in": "marksandspencer",
+    "zara.com": "zara",
+    "hm.com": "hm",
+    "westside.com": "westside",
+    "pantaloons.com": "pantaloons",
+    "maxfashion.in": "max",
+}
+
+DISALLOWED_DOMAINS = {
+    "co", "abfrl", "zepto", "buyhatke", "instagram", "facebook", "pinterest",
+    "youtube", "wikipedia", "reddit", "twitter", "linkedin", "tiktok", "tumblr",
+    "store", "google", "bing", "yahoo", "other"
 }
 
 STOPWORDS = {
@@ -119,17 +152,33 @@ def _extract_tokens(text: Optional[str]) -> set[str]:
 
 def _extract_retailer_from_url(url: str, seller: Optional[str] = None) -> str:
     if seller:
-        s_norm = seller.lower()
-        for r_name, r_id in [("myntra", "myntra"), ("flipkart", "flipkart"), ("ajio", "ajio"), ("amazon", "amazon"), ("nykaa", "nykaa"), ("meesho", "meesho"), ("tatacliq", "tatacliq"), ("tata cliq", "tatacliq"), ("libas", "libas"), ("anouk", "anouk")]:
-            if r_name in s_norm:
+        s_norm = seller.lower().strip()
+        for known_name, r_id in [
+            ("myntra", "myntra"), ("flipkart", "flipkart"), ("ajio", "ajio"),
+            ("amazon", "amazon"), ("nykaa", "nykaa"), ("meesho", "meesho"),
+            ("tatacliq", "tatacliq"), ("tata cliq", "tatacliq"), ("libas", "libas"),
+            ("anouk", "anouk"), ("jiomart", "jiomart"), ("limeroad", "limeroad"),
+            ("indian rani", "indianrani"), ("indianrani", "indianrani"),
+            ("cilory", "cilory"), ("urbanic", "urbanic"), ("littlebox", "littlebox"),
+        ]:
+            if known_name in s_norm:
                 return r_id
     try:
+        # If the URL is wrapped in a Google redirect: e.g. /url?q=... or redirect?url=...
+        if "url=" in url or "url?q=" in url:
+            m_redir = re.search(r"[?&](?:url|q)=([^&]+)", url)
+            if m_redir:
+                url = unquote(m_redir.group(1))
+
         domain = urlparse(url).netloc.lower().replace("www.", "").replace("m.", "").replace("dl.", "")
         for known_domain, rid in RETAILER_DOMAINS.items():
             if known_domain in domain:
                 return rid
         parts = domain.split(".")
-        return parts[0] if parts else "other"
+        cand = parts[0] if parts else "other"
+        if cand in DISALLOWED_DOMAINS or len(cand) <= 2:
+            return "other"
+        return cand
     except Exception:
         return "other"
 
@@ -149,6 +198,31 @@ def _format_retailer_name(retailer_id: str) -> str:
         "snitch": "Snitch",
         "bewakoof": "Bewakoof",
         "anouk": "Anouk Official",
+        "jiomart": "JioMart",
+        "limeroad": "Limeroad",
+        "cilory": "Cilory",
+        "urbanic": "Urbanic",
+        "littlebox": "Littlebox",
+        "indianrani": "Indian Rani",
+        "firstcry": "FirstCry",
+        "snapdeal": "Snapdeal",
+        "clovia": "Clovia",
+        "zivame": "Zivame",
+        "fashor": "Fashor",
+        "berrylush": "Berrylush",
+        "biba": "Biba",
+        "wforwoman": "W for Woman",
+        "aurelia": "Aurelia",
+        "soch": "Soch",
+        "fabindia": "FabIndia",
+        "bairaj": "Bairaj",
+        "trendia": "Trendia",
+        "marksandspencer": "Marks & Spencer",
+        "zara": "Zara",
+        "hm": "H&M",
+        "westside": "Westside",
+        "pantaloons": "Pantaloons",
+        "max": "Max Fashion",
     }
     return names.get(retailer_id.lower(), retailer_id.capitalize())
 
@@ -204,17 +278,17 @@ class URLProductComparisonService:
     """Dedicated service for comparing exact product prices for URL-originated garments."""
 
     def __init__(self, serpapi_key: Optional[str] = None, api_key: Optional[str] = None):
-        self.serpapi_key = (
-            serpapi_key
-            or getattr(settings, "serpapi_api_key", None)
-            or os.getenv("SERPAPI_API_KEY")
-            or "2e429059ba970dd195e2b015cc69f7a179728facc27b243d996a6aa3548fe20e"
-        )
         self.api_key = (
             api_key
             or getattr(settings, "searchapi_api_key", None)
             or os.getenv("SEARCHAPI_API_KEY")
             or "PPfe3AziK1FGR2btbHcSYgAy"
+        )
+        self.serpapi_key = (
+            serpapi_key
+            or getattr(settings, "serpapi_api_key", None)
+            or os.getenv("SERPAPI_API_KEY")
+            or self.api_key
         )
 
 
@@ -334,12 +408,6 @@ class URLProductComparisonService:
             else:
                 logger.debug(f"[URLComparison] Rejected candidate '{raw.get('title')}': {reason}")
 
-        ALLOWED_RETAILERS = {
-            "myntra", "flipkart", "ajio", "amazon", "nykaa", "tatacliq", "meesho",
-            "libas", "biba", "shoppersstop", "snitch", "bewakoof", "houseofrare",
-            "wforwoman", "aurelia", "soch", "fabindia", "bairaj", "marksandspencer", "zara", "hm", "westside", "pantaloons", "max"
-        }
-
         # 4. Concurrently resolve live prices for all verified exact candidates
         if verified_candidates:
             async with httpx.AsyncClient(timeout=3.5, verify=False) as client:
@@ -353,8 +421,8 @@ class URLProductComparisonService:
                     raw = v["raw"]
                     c_ret = v["retailer"]
 
-                    # Filter out unknown/untrusted retailers
-                    if c_ret not in ALLOWED_RETAILERS:
+                    # Filter out disallowed/invalid retailers
+                    if c_ret in DISALLOWED_DOMAINS or c_ret == "other":
                         continue
 
                     resolved_p, resolved_mrp, resolved_disc, resolved_img, p_src = (
@@ -388,6 +456,8 @@ class URLProductComparisonService:
                             resolved_disc = int(round(((resolved_mrp - final_p) / resolved_mrp) * 100))
                         if resolved_disc and resolved_disc > 0:
                             discount_text = f"{resolved_disc}% OFF"
+                    elif resolved_disc and resolved_disc > 0:
+                        discount_text = f"{resolved_disc}% OFF"
 
                     candidates.append({
                         "id": f"offer-{c_ret}-{uuid.uuid4().hex[:4]}",
@@ -458,122 +528,56 @@ class URLProductComparisonService:
         Primary: SerpApi Google Lens API (Multimodal Visual Search matching exact garment photos).
         Fallback: Google Shopping & Targeted Organic Search.
         """
-        search_query = f"{brand or ''} {title or ''}".strip()
+        norm_brand = (brand or "").strip()
+        norm_title = (title or "").strip()
+        if norm_brand and norm_title.lower().startswith(norm_brand.lower()):
+            search_query = norm_title
+        elif norm_brand and norm_brand.lower() in norm_title.lower():
+            search_query = norm_title
+        else:
+            search_query = f"{norm_brand} {norm_title}".strip()
+
         if not search_query and not image_url:
             return []
 
-        clean_title = re.sub(rf"\b{re.escape(brand or '')}\b", "", title or "", flags=re.IGNORECASE).strip()
+        clean_title = re.sub(rf"\b{re.escape(norm_brand)}\b", "", norm_title, flags=re.IGNORECASE).strip()
         generic_query = f"{clean_title}".strip() or search_query
 
         results: List[Dict[str, Any]] = []
 
-        # 1. Primary Strategy: SerpApi Google Lens API via Image Upload
-        if image_url and self.serpapi_key:
+        # 1. Primary Strategy: SearchApi Google Lens API (Multimodal Visual Search matching exact garment photos)
+        active_key = self.api_key or self.serpapi_key
+        if image_url and active_key:
             try:
-                async with httpx.AsyncClient(timeout=25.0, verify=False) as client:
-                    # Download image bytes if image_url is provided
-                    image_id = None
-                    try:
-                        r_img = await client.get(image_url, timeout=6.0, follow_redirects=True)
-                        if r_img.status_code == 200 and len(r_img.content) > 100:
-                            # Upload to SerpApi
-                            r_up = await client.post(
-                                "https://serpapi.com/image",
-                                files={"image": ("garment.jpg", r_img.content, "image/jpeg")},
-                                data={"api_key": self.serpapi_key},
-                                timeout=12.0
-                            )
-                            if r_up.status_code == 200:
-                                image_id = r_up.json().get("image_id")
-                    except Exception as e_up:
-                        logger.debug(f"[URLComparison] Image fetch/upload to SerpApi failed: {e_up}")
-
-                    params = {
-                        "engine": "google_lens",
-                        "country": "in",
-                        "hl": "en",
-                        "api_key": self.serpapi_key,
-                    }
-                    if image_id:
-                        params["image_id"] = image_id
-                    else:
-                        params["url"] = image_url
-
-                    resp_lens = await client.get(SERPAPI_URL, params=params, timeout=25.0)
-                    if resp_lens.status_code == 200:
-                        data = resp_lens.json()
-                        lens_matches = data.get("exact_matches", []) + data.get("visual_matches", [])
-                        for item in lens_matches:
-                            cand_title = item.get("title") or ""
-                            cand_url = item.get("link") or item.get("source_link") or ""
-                            cand_seller = item.get("source") or item.get("seller")
-                            cand_thumb = item.get("thumbnail") or (item.get("image", {}).get("link") if isinstance(item.get("image"), dict) else None)
-                            
-                            snippet_p = None
-                            price_obj = item.get("price")
-                            if isinstance(price_obj, dict):
-                                snippet_p = price_obj.get("extracted_value") or price_obj.get("value")
-                            elif isinstance(price_obj, (int, float)):
-                                snippet_p = float(price_obj)
-                            elif isinstance(price_obj, str):
-                                m_p = re.search(r"[\d,.]+", price_obj)
-                                if m_p:
-                                    try:
-                                        snippet_p = float(m_p.group(0).replace(",", ""))
-                                    except Exception:
-                                        pass
-                            
-                            if snippet_p is None and item.get("extracted_price") is not None:
-                                try:
-                                    snippet_p = float(item.get("extracted_price"))
-                                except Exception:
-                                    pass
-
-                            if cand_title and cand_url and cand_url.startswith("http"):
-                                results.append({
-                                    "title": cand_title,
-                                    "url": cand_url,
-                                    "seller": cand_seller,
-                                    "image_url": cand_thumb,
-                                    "snippet_price": snippet_p,
-                                    "snippet_mrp": None,
-                                    "snippet_disc": None,
-                                    "is_visual_match": True,
-                                })
-            except Exception as e:
-                logger.warn(f"[URLComparison] SerpApi Google Lens discovery failed: {e}")
-
-        # 2. Secondary Strategy: SearchApi Google Lens fallback if SerpApi yielded no results
-        if not results and image_url and self.api_key:
-            try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    resp_sapi_lens = await client.get(
+                # 35s timeout gives Google Lens adequate time to analyze visual patterns and return matches
+                async with httpx.AsyncClient(timeout=35.0, verify=False) as client:
+                    resp_lens = await client.get(
                         SEARCHAPI_URL,
                         params={
                             "engine": "google_lens",
                             "url": image_url,
-                            "country": "in",
+                            "gl": "in",
                             "hl": "en",
-                            "api_key": self.api_key,
+                            "location": "India",
+                            "api_key": active_key,
                         },
                     )
-                    if resp_sapi_lens.status_code == 200:
-                        data = resp_sapi_lens.json()
-                        for item in data.get("visual_matches", []) + data.get("exact_matches", []):
+                    if resp_lens.status_code == 200:
+                        data = resp_lens.json()
+                        lens_matches = data.get("visual_matches", []) + data.get("exact_matches", [])
+                        logger.info(f"[URLComparison] Google Lens discovered {len(lens_matches)} visual matches")
+                        for item in lens_matches:
                             cand_title = item.get("title") or ""
-                            cand_url = item.get("link") or ""
+                            cand_url = item.get("link") or item.get("source_link") or ""
                             cand_seller = item.get("source") or item.get("seller")
-                            cand_thumb = item.get("thumbnail") or item.get("image")
-                            snippet_p = item.get("extracted_price")
-                            if isinstance(snippet_p, dict):
-                                snippet_p = snippet_p.get("value") or snippet_p.get("amount")
-                            if snippet_p is None and item.get("price"):
-                                m_p = re.search(r"[\d,.]+", str(item.get("price")))
-                                if m_p:
-                                    try:
-                                        snippet_p = float(m_p.group(0).replace(",", ""))
-                                    except Exception:
-                                        pass
+                            cand_thumb = (
+                                item.get("thumbnail")
+                                or (item.get("image", {}).get("link") if isinstance(item.get("image"), dict) else item.get("image"))
+                                or item.get("original_image")
+                            )
+
+                            snippet_p, snippet_mrp, snippet_disc = self._extract_lens_pricing(item)
+
                             if cand_title and cand_url and cand_url.startswith("http"):
                                 results.append({
                                     "title": cand_title,
@@ -581,18 +585,19 @@ class URLProductComparisonService:
                                     "seller": cand_seller,
                                     "image_url": cand_thumb,
                                     "snippet_price": snippet_p,
-                                    "snippet_mrp": None,
-                                    "snippet_disc": None,
+                                    "snippet_mrp": snippet_mrp,
+                                    "snippet_disc": snippet_disc,
                                     "is_visual_match": True,
                                 })
+                    else:
+                        logger.warn(f"[URLComparison] Google Lens API returned HTTP {resp_lens.status_code}: {resp_lens.text[:200]}")
             except Exception as e:
-                logger.warn(f"[URLComparison] SearchAPI Google Lens fallback failed: {e}")
+                logger.warn(f"[URLComparison] Google Lens visual discovery failed: {e}")
 
-        # 3. Fallback: Google Shopping & Targeted Organic Search (if no visual matches found)
-        if not results and (self.api_key or self.serpapi_key):
-            active_key = self.api_key or self.serpapi_key
+        # 2. Fallback Strategy: Google Shopping via SearchApi (if visual matches returned fewer than 2)
+        if len(results) < 2 and active_key and search_query:
             try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
+                async with httpx.AsyncClient(timeout=20.0, verify=False) as client:
                     resp_shop = await client.get(
                         SEARCHAPI_URL,
                         params={
@@ -600,6 +605,7 @@ class URLProductComparisonService:
                             "q": search_query,
                             "gl": "in",
                             "hl": "en",
+                            "location": "India",
                             "api_key": active_key,
                         }
                     )
@@ -609,30 +615,66 @@ class URLProductComparisonService:
                             link = item.get("link") or item.get("product_link") or item.get("offers_link")
                             cand_title = item.get("title") or ""
                             cand_seller = item.get("seller") or item.get("source")
-                            snippet_p = item.get("extracted_price")
-                            if snippet_p is None and item.get("price"):
-                                m_p = re.search(r"[\d,.]+", str(item.get("price")))
-                                if m_p:
-                                    try:
-                                        snippet_p = float(m_p.group(0).replace(",", ""))
-                                    except Exception:
-                                        pass
-                            if cand_title and link:
+                            snippet_p, snippet_mrp, snippet_disc = self._extract_lens_pricing(item)
+                            if cand_title and link and link.startswith("http"):
                                 results.append({
                                     "title": cand_title,
                                     "url": link,
                                     "seller": cand_seller,
                                     "image_url": item.get("thumbnail"),
                                     "snippet_price": snippet_p,
-                                    "snippet_mrp": None,
-                                    "snippet_disc": None,
+                                    "snippet_mrp": snippet_mrp,
+                                    "snippet_disc": snippet_disc,
                                     "is_visual_match": False,
                                 })
             except Exception as e:
-                logger.warn(f"[URLComparison] SearchAPI Google Shopping discovery failed: {e}")
+                logger.warn(f"[URLComparison] Google Shopping discovery failed: {e}")
 
-        # 4. Resilient Fallback Meta-Search with 4-row grouping
-        if len(results) < 3:
+        # 3. Fallback Strategy: Google Organic Search on SearchApi (if shopping returned fewer than 2)
+        if len(results) < 2 and active_key and search_query:
+            try:
+                async with httpx.AsyncClient(timeout=20.0, verify=False) as client:
+                    resp_google = await client.get(
+                        SEARCHAPI_URL,
+                        params={
+                            "engine": "google",
+                            "q": f"{search_query} buy online India Flipkart AJIO Meesho",
+                            "gl": "in",
+                            "hl": "en",
+                            "location": "India",
+                            "api_key": active_key,
+                        }
+                    )
+                    if resp_google.status_code == 200:
+                        data = resp_google.json()
+                        for item in data.get("organic_results", []):
+                            link = item.get("link") or ""
+                            cand_title = item.get("title") or ""
+                            cand_seller = item.get("source")
+                            p_val, s_mrp, s_disc = self._parse_snippet_pricing(cand_title, item.get("snippet", ""))
+                            rich = item.get("rich_snippet", {})
+                            if not p_val and isinstance(rich, dict):
+                                top = rich.get("top", {})
+                                if isinstance(top, dict):
+                                    exts = top.get("detected_extensions", {})
+                                    if "price" in exts:
+                                        p_val = _parse_inr_price(exts["price"])
+                            if cand_title and link and link.startswith("http"):
+                                results.append({
+                                    "title": cand_title,
+                                    "url": link,
+                                    "seller": cand_seller,
+                                    "image_url": item.get("thumbnail"),
+                                    "snippet_price": p_val,
+                                    "snippet_mrp": s_mrp,
+                                    "snippet_disc": s_disc,
+                                    "is_visual_match": False,
+                                })
+            except Exception as e:
+                logger.warn(f"[URLComparison] Google organic discovery failed: {e}")
+
+        # 3. Tertiary Fallback Meta-Search with DuckDuckGo
+        if len(results) < 2:
             try:
                 headers = {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
@@ -640,7 +682,6 @@ class URLProductComparisonService:
                 async with httpx.AsyncClient(timeout=5.0, headers=headers) as fb_client:
                     for fb_q in [
                         f"{search_query} buy online India Flipkart AJIO Meesho Tata CLiQ Myntra",
-                        f"{generic_query} buy online India Flipkart AJIO Meesho Nykaa",
                     ]:
                         r_fb = await fb_client.post("https://lite.duckduckgo.com/lite/", data={"q": fb_q})
                         if r_fb.status_code == 200:
@@ -686,6 +727,39 @@ class URLProductComparisonService:
                 logger.warn(f"[URLComparison] Fallback discovery error: {fb_err}")
 
         return results
+
+    def _extract_lens_pricing(self, item: Dict[str, Any]) -> Tuple[Optional[float], Optional[float], Optional[int]]:
+        """Strictly extracts price, MRP, and discount from SearchApi Google Lens / Shopping items."""
+        p_val = None
+        mrp_val = None
+        disc_val = None
+
+        # 1. Check extracted_price
+        ext_p = item.get("extracted_price")
+        if ext_p is not None:
+            p_val = _parse_inr_price(ext_p)
+
+        # 2. Check price field (dict or str or num)
+        p_obj = item.get("price")
+        if p_val is None and p_obj is not None:
+            p_val = _parse_inr_price(p_obj)
+
+        if isinstance(p_obj, dict):
+            orig = p_obj.get("original_value") or p_obj.get("mrp") or p_obj.get("strikethrough")
+            if orig:
+                mrp_val = _parse_inr_price(orig)
+
+        # 3. Snippet or text fields
+        if p_val is None:
+            text = f"{item.get('title', '')} {item.get('snippet', '')} {item.get('source_snippet', '')}"
+            p_val, s_mrp, s_disc = self._parse_snippet_pricing(item.get("title", ""), text)
+            mrp_val = mrp_val or s_mrp
+            disc_val = disc_val or s_disc
+
+        if mrp_val and p_val and mrp_val > p_val and not disc_val:
+            disc_val = int(round(((mrp_val - p_val) / mrp_val) * 100))
+
+        return p_val, mrp_val, disc_val
 
     def _parse_snippet_pricing(self, title: str, snippet: str) -> Tuple[Optional[float], Optional[float], Optional[int]]:
         """Extracts selling price, MRP, and discount percentage from search snippets."""

@@ -32,6 +32,17 @@ function getCacheFilename(uri: string): string {
   return `cached_${Math.abs(hash)}.${ext}`;
 }
 
+const memoryCache = new Map<string, string>();
+const MAX_MEMORY_CACHE = 200;
+
+function setMemoryCache(key: string, path: string) {
+  if (memoryCache.size >= MAX_MEMORY_CACHE) {
+    const oldestKey = memoryCache.keys().next().value;
+    if (oldestKey) memoryCache.delete(oldestKey);
+  }
+  memoryCache.set(key, path);
+}
+
 export interface CachedImageProps extends Omit<ImageProps, 'source'> {
   uri?: string | null;
   source?: any;
@@ -45,7 +56,18 @@ export function CachedImage({
   placeholderColor = '#F2EBE5',
   ...props
 }: CachedImageProps) {
-  const [localUri, setLocalUri] = useState<string | null>(null);
+  const isLocal = uri && (
+    uri.startsWith('file://') ||
+    uri.startsWith('ph://') ||
+    uri.startsWith('content://') ||
+    uri.startsWith('data:')
+  );
+
+  const [localUri, setLocalUri] = useState<string | null>(() => {
+    if (!uri) return null;
+    if (isLocal) return uri;
+    return memoryCache.get(uri) || uri;
+  });
 
   useEffect(() => {
     let isMounted = true;
@@ -55,16 +77,19 @@ export function CachedImage({
       return;
     }
 
-    // Direct local URIs (bundled assets, local camera captures, file://)
-    if (
-      uri.startsWith('file://') ||
-      uri.startsWith('ph://') ||
-      uri.startsWith('content://') ||
-      uri.startsWith('data:')
-    ) {
+    // Direct local URIs (bundled assets, local camera captures, file://, data:)
+    if (isLocal) {
       setLocalUri(uri);
       return;
     }
+
+    if (memoryCache.has(uri)) {
+      setLocalUri(memoryCache.get(uri)!);
+      return;
+    }
+
+    // Immediately display network URI without blocking on disk download
+    setLocalUri(uri);
 
     async function loadCachedImage() {
       try {
@@ -74,18 +99,19 @@ export function CachedImage({
         const fileInfo = await FileSystem.getInfoAsync(localPath);
 
         if (fileInfo.exists) {
+          setMemoryCache(uri!, localPath);
           if (isMounted) setLocalUri(localPath);
           return;
         }
 
-        // Fast download to local phone disk cache
+        // Fast download to local phone disk cache in background
         const downloadRes = await FileSystem.downloadAsync(uri!, localPath);
         if (isMounted && downloadRes?.uri) {
-          setLocalUri(downloadRes.uri);
+          setMemoryCache(uri!, downloadRes.uri);
+          if (isMounted) setLocalUri(downloadRes.uri);
         }
       } catch (err) {
-        // Fallback to direct network URI if cache fails
-        if (isMounted) setLocalUri(uri ?? null);
+        // Direct network URI is already displayed, ignore background cache failure
       }
     }
 
@@ -104,5 +130,17 @@ export function CachedImage({
     return <View style={[{ backgroundColor: placeholderColor }, style]} />;
   }
 
-  return <Image source={{ uri: localUri }} style={style} {...props} />;
+  return (
+    <Image
+      source={{ uri: localUri }}
+      style={style}
+      onError={() => {
+        // Gracefully fallback to high-quality placeholder if network URL fails
+        if (localUri && !localUri.includes('photo-1515886657613-9f3515b0c78f')) {
+          setLocalUri('https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80');
+        }
+      }}
+      {...props}
+    />
+  );
 }

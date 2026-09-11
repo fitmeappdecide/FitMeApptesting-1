@@ -34,8 +34,11 @@ class VertexProvider(TryOnProvider):
         
         # Set absolute path for Google credentials
         backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        gcp_key = os.path.join(backend_dir, "gcp-vertex-key.json")
         creds_path = os.path.join(backend_dir, "firebase", "fitme-3ac94-firebase-adminsdk-fbsvc-5ec19c616f.json")
-        if os.path.exists(creds_path):
+        if os.path.exists(gcp_key):
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = gcp_key
+        elif os.path.exists(creds_path):
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_path
 
         if settings.vertex_project_id:
@@ -110,7 +113,7 @@ class VertexProvider(TryOnProvider):
                     elif os.path.exists(user_image_url):
                         with open(user_image_url, "rb") as f:
                             user_bytes = f.read()
-                    elif user_image_url.startswith("scans/") or user_image_url.startswith("user-photos/"):
+                    elif user_image_url.startswith("scans/") or user_image_url.startswith("user-photos/") or user_image_url.startswith("user_photos/"):
                         user_bytes = download_user_photo(user_image_url)
                     else:
                         user_bytes = retrieve_image_bytes_from_encrypted_ref(user_image_url)
@@ -221,10 +224,8 @@ class VertexProvider(TryOnProvider):
                             except Exception:
                                 pass
 
-            # Safe fallback result to prevent 500 error on client
-            return TryOnResult(
-                image_urls=[garment_image_url],
-                provider_name="fitme_engine",
-                processing_time_seconds=0.5,
-            )
+            # Do NOT return the garment catalog image on failure, as that confuses users
+            # by showing the store model under 'ON YOU'. Raise an error so the tryon job
+            # fails gracefully and allows the user to retry with a clean photo.
+            raise RuntimeError("Try-on generation temporarily failed. Please ensure a clear full-body photo is uploaded.")
 
