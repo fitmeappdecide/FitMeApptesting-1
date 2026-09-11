@@ -26,11 +26,11 @@ from app.main import app
 
 from sqlalchemy.pool import StaticPool
 
-# Create in-memory SQLite async engine with StaticPool so all async connections share the same memory DB
+# Create in-memory SQLite async engine with shared cache and StaticPool so all async connections share the same memory DB
 test_engine = create_async_engine(
-    "sqlite+aiosqlite:///:memory:",
+    "sqlite+aiosqlite:///file:test_mem_db?mode=memory&cache=shared&uri=true",
     poolclass=StaticPool,
-    connect_args={"check_same_thread": False},
+    connect_args={"check_same_thread": False, "uri": True},
 )
 TestAsyncSessionLocal = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
 

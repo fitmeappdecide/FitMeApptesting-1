@@ -30,8 +30,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote_plus, unquote
 from app.utils.validators import extract_merchant_destination_url, extract_best_candidate_url, is_direct_merchant_product_url
 
-import httpx
-from bs4 import BeautifulSoup
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    BeautifulSoup = None
 
 from app.core.config import settings
 from app.services.garment_analysis import detect_garment_type, ETHNIC_TYPES, GARMENT_TYPES

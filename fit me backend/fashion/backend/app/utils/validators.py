@@ -3,7 +3,30 @@ from fastapi import UploadFile
 
 JPEG_MAGIC_PREFIX = b"\xff\xd8\xff"
 PNG_MAGIC_PREFIX = b"\x89PNG"
+WEBP_MAGIC_PREFIX = b"RIFF"
+HEIC_BRANDS = {b"heic", b"heix", b"hevc", b"heim", b"heis", b"mif1", b"msf1"}
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pass
+
+
+def is_valid_image_bytes(data: bytes) -> bool:
+    if data.startswith(JPEG_MAGIC_PREFIX) or data.startswith(PNG_MAGIC_PREFIX):
+        return True
+    if data.startswith(WEBP_MAGIC_PREFIX) and len(data) >= 12 and data[8:12] == b"WEBP":
+        return True
+    if len(data) >= 12 and data[4:8] == b"ftyp":
+        brand = data[8:12].lower()
+        if brand in HEIC_BRANDS:
+            return True
+        for offset in range(12, min(len(data), 36), 4):
+            if data[offset : offset + 4].lower() in HEIC_BRANDS:
+                return True
+    return False
 
 
 async def validate_image_upload(file: UploadFile) -> bytes:
@@ -11,8 +34,8 @@ async def validate_image_upload(file: UploadFile) -> bytes:
     await file.seek(0)
     if len(data) > MAX_UPLOAD_BYTES:
         raise ValueError("Image exceeds 10MB limit.")
-    if not (data.startswith(JPEG_MAGIC_PREFIX) or data.startswith(PNG_MAGIC_PREFIX)):
-        raise ValueError("Only JPEG and PNG images with valid magic bytes are accepted.")
+    if not is_valid_image_bytes(data):
+        raise ValueError("Only JPEG, PNG, WebP, and HEIC images with valid magic bytes are accepted.")
     return data
 
 

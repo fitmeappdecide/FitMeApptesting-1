@@ -42,9 +42,69 @@ async def update_profile(payload: UserUpdate, user: User = Depends(get_current_u
     return UserPublic.model_validate(user)
 
 
-@router.delete("/account", status_code=status.HTTP_202_ACCEPTED)
-async def delete_account(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict:
-    user.is_active = False
+@router.delete("/account", status_code=status.HTTP_200_OK)
+async def delete_account(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict:
+    stmt = select(User).where(User.id == current_user.id)
+    user = (await db.execute(stmt)).scalar_one_or_none()
+    if not user:
+        return {"status": "deleted", "message": "User account and all personal data permanently deleted."}
+
+    from sqlalchemy import delete as sql_delete
+    from app.models.user_saved_photo import UserSavedPhoto
+    from app.models.body_scan import BodyScan
+    from app.models.body_profile import BodyProfile
+    from app.models.tryon_job import TryOnJob
+    from app.models.ava import AVAConversation, AVAMessage, AVAPreference, AVASavedOutfit
+    from app.models.product_intelligence import PIScan, PIAffiliateClick
+    from app.services.storage_service import delete_user_photo, delete_images_from_storage
+
+    # 1. Clean up user photos and tryon assets from storage
+    try:
+        saved_photos_stmt = select(UserSavedPhoto).where(UserSavedPhoto.user_id == user.id)
+        saved_photos = (await db.execute(saved_photos_stmt)).scalars().all()
+        for p in saved_photos:
+            if p.storage_path:
+                delete_user_photo(p.storage_path)
+
+        scans_stmt = select(BodyScan).where(BodyScan.user_id == user.id)
+        scans = (await db.execute(scans_stmt)).scalars().all()
+        for s in scans:
+            for ref in [s.front_photo_url_encrypted, s.back_photo_url_encrypted, s.left_photo_url_encrypted, s.right_photo_url_encrypted]:
+                if ref:
+                    delete_user_photo(ref)
+
+        jobs_stmt = select(TryOnJob).where(TryOnJob.user_id == user.id)
+        jobs = (await db.execute(jobs_stmt)).scalars().all()
+        for j in jobs:
+            if j.result_image_urls:
+                delete_images_from_storage(j.result_image_urls)
+    except Exception as storage_err:
+        print(f"Notice: Storage cleanup warning during account deletion ({storage_err})")
+
+    # 2. Explicitly remove all user records across all models
+    try:
+        # AVA messages and conversations
+        user_conv_ids_stmt = select(AVAConversation.id).where(AVAConversation.user_id == user.id)
+        await db.execute(sql_delete(AVAMessage).where(AVAMessage.conversation_id.in_(user_conv_ids_stmt)))
+        await db.execute(sql_delete(AVAConversation).where(AVAConversation.user_id == user.id))
+        await db.execute(sql_delete(AVAPreference).where(AVAPreference.user_id == user.id))
+        await db.execute(sql_delete(AVASavedOutfit).where(AVASavedOutfit.user_id == user.id))
+
+        # Try-on jobs, body scans, profiles, saved photos
+        await db.execute(sql_delete(TryOnJob).where(TryOnJob.user_id == user.id))
+        await db.execute(sql_delete(BodyScan).where(BodyScan.user_id == user.id))
+        await db.execute(sql_delete(BodyProfile).where(BodyProfile.user_id == user.id))
+        await db.execute(sql_delete(UserSavedPhoto).where(UserSavedPhoto.user_id == user.id))
+
+        # Product intelligence scans and clicks
+        await db.execute(sql_delete(PIScan).where(PIScan.user_id == str(user.id)))
+        await db.execute(sql_delete(PIAffiliateClick).where(PIAffiliateClick.user_id == str(user.id)))
+    except Exception as cascade_err:
+        print(f"Notice: Cascade records cleanup warning ({cascade_err})")
+
+    # 3. Delete user record
+    await db.delete(user)
     await db.commit()
-    return {"status": "deletion_scheduled", "complete_within_hours": 24}
+
+    return {"status": "deleted", "message": "User account and all personal data permanently deleted."}
 

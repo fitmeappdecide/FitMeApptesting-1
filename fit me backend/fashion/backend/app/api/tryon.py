@@ -282,9 +282,10 @@ async def start_tryon(
         except HTTPException:
             raise
         except Exception as exc:
-            print(f"Notice: TryOn generation recovered gracefully ({exc}).")
-            job.status = "completed"
-            job.result_image_urls = [first_garment_url]
+            print(f"Notice: TryOn generation failed ({exc}).")
+            job.status = "failed"
+            job.result_image_urls = []
+            job.error_message = "Try-on generation temporarily failed. Please ensure a clear full-body photo is uploaded."
             job.processing_time_seconds = 0.5
 
         # ------------------------------------------------------------------
@@ -292,25 +293,26 @@ async def start_tryon(
         # ------------------------------------------------------------------
         job.completed_at = datetime.now(UTC)
 
-        if brand:
+        if brand and job.status == "completed":
             try:
                 brand.try_ons_used_this_month += 1
             except Exception:
                 pass
 
-        try:
-            db.add(
-                AnalyticsEvent(
-                    brand_id=garment.brand_id,
-                    event_type="tryon_completed",
-                    tryon_job_id=job.id,
-                    user_id=user.id,
-                    garment_id=garment.id,
-                    metadata_json={"cache_tier": cache_tier},
+        if job.status == "completed":
+            try:
+                db.add(
+                    AnalyticsEvent(
+                        brand_id=garment.brand_id,
+                        event_type="tryon_completed",
+                        tryon_job_id=job.id,
+                        user_id=user.id,
+                        garment_id=garment.id,
+                        metadata_json={"cache_tier": cache_tier},
+                    )
                 )
-            )
-        except Exception as ae_err:
-            print(f"Notice: AnalyticsEvent creation skipped ({ae_err})")
+            except Exception as ae_err:
+                print(f"Notice: AnalyticsEvent creation skipped ({ae_err})")
 
         try:
             await db.commit()
@@ -320,9 +322,6 @@ async def start_tryon(
             try:
                 # Re-add job in fresh transaction
                 job.completed_at = datetime.now(UTC)
-                job.status = "completed"
-                if not job.result_image_urls:
-                    job.result_image_urls = [first_garment_url]
                 db.add(job)
                 await db.commit()
             except Exception as final_err:
@@ -574,8 +573,14 @@ async def status(
             raise api_error(403, "FORBIDDEN", "You do not have access to this anonymous try-on job.", "आपके पास इस जॉब की अनुमति नहीं है।")
 
     progress = 100 if job.status == "completed" else 40 if job.status == "processing" else 0
-    step = "Upscaling to HD" if job.status == "completed" else "Running AI synthesis"
-    return TryOnStatusResponse(id=job.id, status=job.status, progress_pct=progress, current_step=step)
+    step = "Upscaling to HD" if job.status == "completed" else ("Failed" if job.status == "failed" else "Running AI synthesis")
+    return TryOnStatusResponse(
+        id=job.id,
+        status=job.status,
+        progress_pct=progress,
+        current_step=step,
+        error_message=job.error_message if job.status == "failed" else None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -716,6 +721,14 @@ async def result(
         expected_session = job.runpod_job_id.split(":", 1)[1]
         if x_anonymous_session_id and x_anonymous_session_id.strip() != expected_session:
             raise api_error(403, "FORBIDDEN", "You do not have access to this anonymous try-on job.", "आपके पास इस जॉब की अनुमति नहीं है।")
+
+    if job.status == "failed":
+        raise api_error(
+            422,
+            "TRYON_FAILED",
+            job.error_message or "Try-on generation failed. Please try again with a clearer photo.",
+            "ट्राई-ऑन जनरेशन विफल रहा।",
+        )
 
     garment = await db.get(Garment, job.garment_id)
     scan_result = await db.execute(

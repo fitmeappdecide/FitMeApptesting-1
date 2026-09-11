@@ -197,11 +197,16 @@ export default function Profile() {
                 {
                   text: 'Delete My Account',
                   style: 'destructive',
-                  onPress: () => {
-                    // TODO: Call DELETE /user endpoint and revoke auth session
-                    Alert.alert('Account Deleted', 'Your account has been deleted.', [
-                      { text: 'OK', onPress: () => router.replace('/login') },
-                    ]);
+                  onPress: async () => {
+                    try {
+                      await userApi.deleteAccount();
+                      await logout();
+                      Alert.alert('Account Deleted', 'Your account and personal data have been permanently deleted.', [
+                        { text: 'OK', onPress: () => router.replace('/login') },
+                      ]);
+                    } catch (e: any) {
+                      Alert.alert('Error', e?.message || 'Could not delete account. Please try again.');
+                    }
                   },
                 },
               ],

@@ -151,7 +151,7 @@ export class ApiError extends Error {
 
 export type RequestOptions = RequestInit & { timeoutMs?: number; silentTimeout?: boolean };
 
-async function request<T>(endpoint: string, options: RequestOptions = {}, retry = true): Promise<T> {
+export async function request<T>(endpoint: string, options: RequestOptions = {}, retry = true): Promise<T> {
   console.log('REQUEST FUNCTION CALLED');
   console.log('BASE_URL:', BASE_URL);
   const isForm = options.body instanceof FormData;
@@ -467,7 +467,13 @@ export const scanApi = {
 
 // ─── TRY-ON ── /api/v1/tryon ─────────────────────────────────────────
 export type TryOnStartResponse = { job_id: string; estimated_seconds: number; cache_tier: string | null };
-export type TryOnStatusResponse = { id: string; status: string; progress_pct: number; current_step: string };
+export type TryOnStatusResponse = {
+  id: string;
+  status: string;
+  progress_pct: number;
+  current_step: string;
+  error_message?: string | null;
+};
 export type TryOnResultResponse = {
   result_image_urls: string[];
   fit_analysis: Record<string, unknown>;
@@ -578,7 +584,11 @@ export const tryOnApi = {
         return tryOnApi.getResult(jobId);
       }
       if (status.status === 'failed' || status.status === 'error') {
-        throw new ApiError(500, 'Try-on generation failed.', 'TRYON_FAILED');
+        throw new ApiError(
+          500,
+          status.error_message || 'Try-on generation temporarily failed. Please ensure a clear full-body photo is uploaded.',
+          'TRYON_FAILED'
+        );
       }
       await new Promise((r) => setTimeout(r, intervalMs));
     }

@@ -1,0 +1,4 @@
+pluginManagement {
+    def nodeExe = providers.gradleProperty('nodeExecutable').orElse('node').get()
+    println "NODE EXE IN PLUGINMANAGEMENT IS " + nodeExe
+}

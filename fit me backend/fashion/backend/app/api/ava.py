@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-from app.api.deps import get_current_user_or_anonymous
+from app.api.deps import get_current_user, get_current_user_or_anonymous
 from app.core.database import get_db
 from app.models.user import User
 from app.models.ava import AVAConversation, AVAMessage, AVAPreference, AVASavedOutfit
@@ -54,6 +54,22 @@ async def chat_with_ava(
             detail="Message prompt cannot be empty.",
         )
 
+    if payload.conversation_id:
+        conv_stmt = select(AVAConversation).where(AVAConversation.id == payload.conversation_id)
+        conv_res = await db.execute(conv_stmt)
+        existing_conv = conv_res.scalar_one_or_none()
+        if existing_conv and existing_conv.user_id:
+            if not current_user:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authentication required to access this conversation.",
+                )
+            if existing_conv.user_id != current_user.id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You do not have permission to access this conversation.",
+                )
+
     user_id = current_user.id if current_user else None
     logger.info(f"[AVA API] CHAT_REQUEST: prompt='{payload.message}'")
     logger.info(f"[AVA API] USER_ID: {user_id}")
@@ -73,16 +89,15 @@ async def chat_with_ava(
 
 @router.get("/conversations")
 async def get_user_conversations(
-    current_user: Optional[User] = Depends(get_current_user_or_anonymous),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> List[Dict[str, Any]]:
-    stmt = select(AVAConversation)
-    if current_user:
-        stmt = stmt.where(AVAConversation.user_id == current_user.id)
-    else:
-        stmt = stmt.where(AVAConversation.user_id.is_(None))
-
-    stmt = stmt.order_by(AVAConversation.updated_at.desc()).limit(30)
+    stmt = (
+        select(AVAConversation)
+        .where(AVAConversation.user_id == current_user.id)
+        .order_by(AVAConversation.updated_at.desc())
+        .limit(30)
+    )
     res = await db.execute(stmt)
     convs = res.scalars().all()
 
@@ -101,8 +116,23 @@ async def get_user_conversations(
 @router.delete("/conversations/{conversation_id}")
 async def delete_user_conversation(
     conversation_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
+    conv_stmt = select(AVAConversation).where(AVAConversation.id == conversation_id)
+    conv_res = await db.execute(conv_stmt)
+    conv = conv_res.scalar_one_or_none()
+    if not conv:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Conversation '{conversation_id}' not found.",
+        )
+    if conv.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to delete this conversation.",
+        )
+
     from sqlalchemy import delete
     await db.execute(delete(AVAMessage).where(AVAMessage.conversation_id == conversation_id))
     await db.execute(delete(AVAConversation).where(AVAConversation.id == conversation_id))
@@ -113,9 +143,10 @@ async def delete_user_conversation(
 @router.get("/conversations/{conversation_id}/messages")
 async def get_conversation_messages(
     conversation_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
-    # Verify conversation exists
+    # Verify conversation exists and belongs to current user
     conv_stmt = select(AVAConversation).where(AVAConversation.id == conversation_id)
     conv_res = await db.execute(conv_stmt)
     conv = conv_res.scalar_one_or_none()
@@ -123,6 +154,11 @@ async def get_conversation_messages(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Conversation '{conversation_id}' not found.",
+        )
+    if conv.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to access this conversation.",
         )
 
     stmt = (

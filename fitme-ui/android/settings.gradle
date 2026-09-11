@@ -1,0 +1,36 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        google()
+        mavenCentral()
+    }
+}
+
+def nodeExe = settings.providers.gradleProperty('nodeExecutable').orElse(System.getenv('NODE_BINARY') ?: 'node').get()
+System.setProperty("nodeExecutable", nodeExe.toString())
+
+dependencyResolutionManagement {
+    versionCatalogs {
+        reactAndroidLibs {
+            def rnPackageJson = [nodeExe, '--print', "require.resolve('react-native/package.json')"].execute(null, settingsDir).text.trim()
+            if (rnPackageJson) {
+                from(files(new File(rnPackageJson, "../gradle/libs.versions.toml")))
+            }
+        }
+    }
+}
+
+rootProject.name = "FitMe"
+include(":app")
+include(":extraction-core")
+project(":extraction-core").projectDir = new File(settingsDir, "../../native/android-extraction-core")
+
+includeBuild("../node_modules/@react-native/gradle-plugin")
+
+apply from: file("../node_modules/@react-native-community/cli-platform-android/native_modules.gradle"); applyNativeModulesSettingsGradle(settings)
+
+def expoPackageJson = [nodeExe, '--print', "require.resolve('expo/package.json')"].execute(null, settingsDir).text.trim()
+if (expoPackageJson) {
+    apply from: new File(expoPackageJson, "../scripts/autolinking.gradle")
+    useExpoModules()
+}

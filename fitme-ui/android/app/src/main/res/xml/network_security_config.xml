@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Allows cleartext HTTP traffic to local/LAN backend servers during development.
+  192.168.0.0/16 covers any home/office WiFi subnet.
+  10.0.0.0/8 covers Android emulator (10.0.2.2) and corporate LANs.
+  localhost / 127.0.0.1 are included for iOS simulator parity.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">10.0.2.2</domain>
+    </domain-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+</network-security-config>

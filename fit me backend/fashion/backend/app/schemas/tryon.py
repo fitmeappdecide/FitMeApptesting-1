@@ -27,6 +27,7 @@ class TryOnStatusResponse(BaseModel):
     status: str
     progress_pct: int
     current_step: str
+    error_message: str | None = None
 
 
 class TryOnResultResponse(BaseModel):

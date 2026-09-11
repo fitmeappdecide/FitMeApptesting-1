@@ -1,0 +1,60 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+buildscript {
+    ext {
+        kotlinVersion = findProperty('android.kotlinVersion') ?: '1.9.23'
+    }
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath('com.android.tools.build:gradle:8.2.1')
+        classpath('com.facebook.react:react-native-gradle-plugin')
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion")
+        classpath('com.google.gms:google-services:4.4.1')
+    }
+}
+
+ext {
+    buildToolsVersion = findProperty('android.buildToolsVersion') ?: '34.0.0'
+    minSdkVersion = Integer.parseInt(findProperty('android.minSdkVersion') ?: '23')
+    compileSdkVersion = Integer.parseInt(findProperty('android.compileSdkVersion') ?: '34')
+    targetSdkVersion = Integer.parseInt(findProperty('android.targetSdkVersion') ?: '34')
+
+    ndkVersion = "26.1.10909125"
+    def findNode() {
+        def prop = findProperty('nodeExecutable')
+        if (prop) return prop
+        def env = System.getenv('NODE_BINARY')
+        if (env) return env
+        def userHome = System.getProperty('user.home')
+        def pnpmPath = "${userHome}/Library/pnpm/bin/node"
+        if (new File(pnpmPath).exists()) return pnpmPath
+        return 'node'
+    }
+    nodeExecutable = findNode()
+}
+
+System.setProperty("nodeExecutable", ext.nodeExecutable.toString())
+
+apply plugin: "com.facebook.react.rootproject"
+
+allprojects {
+    repositories {
+        maven {
+            // All of React Native (JS, Obj-C sources, Android binaries) is installed from npm
+            def nodeExe = rootProject.ext.nodeExecutable
+            url(new File([nodeExe, '--print', "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim(), '../android'))
+        }
+        maven {
+            // Android JSC is installed from npm
+            def nodeExe = rootProject.ext.nodeExecutable
+            url(new File([nodeExe, '--print', "require.resolve('jsc-android/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim(), '../dist'))
+        }
+
+        google()
+        mavenCentral()
+        maven { url 'https://www.jitpack.io' }
+    }
+}

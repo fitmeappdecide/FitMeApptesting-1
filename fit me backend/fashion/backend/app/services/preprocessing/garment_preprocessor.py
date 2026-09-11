@@ -8,8 +8,15 @@ from typing import Literal, Optional, Tuple
 
 import numpy as np
 from PIL import Image, ImageFilter
-import torch
-from transformers import AutoImageProcessor, AutoModelForSemanticSegmentation
+try:
+    import torch
+    from transformers import AutoImageProcessor, AutoModelForSemanticSegmentation
+    HAS_TORCH = True
+except ImportError:
+    torch = None
+    AutoImageProcessor = None
+    AutoModelForSemanticSegmentation = None
+    HAS_TORCH = False
 
 # Configurable concurrency limit (Default: 2 per worker for safe memory bounding)
 MAX_CONCURRENT_WORKERS = int(os.getenv("SEGFORMER_MAX_CONCURRENT", "2"))
@@ -92,6 +99,8 @@ class GarmentPreprocessor:
         self.in_flight_lock = asyncio.Lock()
 
     def _ensure_model_loaded_sync(self):
+        if not HAS_TORCH:
+            return
         if not self._model_loaded:
             t0 = time.time()
             self._processor = AutoImageProcessor.from_pretrained(self.model_name)
@@ -138,6 +147,13 @@ class GarmentPreprocessor:
         if not image_bytes or len(image_bytes) < 100:
             return image_bytes, {
                 "status": "FALLBACK_EMPTY_INPUT",
+                "is_fallback": True,
+                "duration_ms": 0.0,
+            }
+
+        if not HAS_TORCH:
+            return image_bytes, {
+                "status": "PASSTHROUGH_NO_TORCH",
                 "is_fallback": True,
                 "duration_ms": 0.0,
             }

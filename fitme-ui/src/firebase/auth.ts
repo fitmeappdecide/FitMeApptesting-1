@@ -9,7 +9,6 @@ import { authApi, clearAuth } from '../services/api';
 // In a real app you might pull this from native config; hard‑coded here for simplicity.
 GoogleSignin.configure({
   scopes: ['profile', 'email'],
-  androidClientId: '691300275712-obb2590klau0lqj87nldb2cnd277tidm.apps.googleusercontent.com',
   webClientId: '691300275712-n5ime2qjjkmadd7el2vurjct4uoe8156.apps.googleusercontent.com',
   offlineAccess: false
 });
@@ -45,7 +44,7 @@ export const loginWithGoogle = async () => {
     // Initiate native Google sign‑in
     console.log("Calling GoogleSignin.signIn()");
     const result = await GoogleSignin.signIn();
-    console.log("Google Sign-In Result type:", result?.type);
+    console.log("Google Sign-In Result type:", (result as any)?.type);
 
     // @react-native-google-signin/google-signin v13+ wraps in { type, data }
     const signInData = (result as any)?.data ?? result;

@@ -63,7 +63,7 @@ export interface AVAMessageItem {
   created_at?: string;
 }
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
+import { request } from './api';
 
 export async function sendAVAMessage(
   message: string,
@@ -71,7 +71,6 @@ export async function sendAVAMessage(
   selectedOutfit?: AVAOutfitCard,
   imageBase64?: string
 ): Promise<AVAChatResponsePayload> {
-  const requestUrl = `${BACKEND_URL}/api/v1/ava/chat`;
   const payload = {
     message,
     conversation_id: conversationId || null,
@@ -79,56 +78,27 @@ export async function sendAVAMessage(
     image_base64: imageBase64 || null,
   };
 
-  console.log(`[avaService] POST ${requestUrl}`, JSON.stringify(payload));
-
-  const response = await fetch(requestUrl, {
+  return await request<AVAChatResponsePayload>('/api/v1/ava/chat', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(payload),
   });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    console.error(`[avaService] API Error (${response.status}):`, errText);
-    throw new Error(`AVA Backend Error (${response.status}): ${errText || 'Network request failed'}`);
-  }
-
-  const data: AVAChatResponsePayload = await response.json();
-  console.log(`[avaService] Received Response:`, data);
-  return data;
 }
 
 export async function getAVAConversations(): Promise<AVAConversationSummary[]> {
-  const requestUrl = `${BACKEND_URL}/api/v1/ava/conversations`;
-  console.log(`[avaService] GET ${requestUrl}`);
-  const response = await fetch(requestUrl);
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Failed to fetch conversations (${response.status}): ${errText}`);
-  }
-  return await response.json();
+  return await request<AVAConversationSummary[]>('/api/v1/ava/conversations');
 }
 
 export async function getAVAMessages(conversationId: string): Promise<{ conversation_id: string; title: string; messages: AVAMessageItem[] }> {
-  const requestUrl = `${BACKEND_URL}/api/v1/ava/conversations/${conversationId}/messages`;
-  console.log(`[avaService] GET ${requestUrl}`);
-  const response = await fetch(requestUrl);
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Failed to fetch messages for ${conversationId} (${response.status}): ${errText}`);
-  }
-  return await response.json();
+  return await request<{ conversation_id: string; title: string; messages: AVAMessageItem[] }>(
+    `/api/v1/ava/conversations/${conversationId}/messages`
+  );
 }
 
 export async function deleteAVAConversation(conversationId: string): Promise<{ success: boolean }> {
-  const requestUrl = `${BACKEND_URL}/api/v1/ava/conversations/${conversationId}`;
-  console.log(`[avaService] DELETE ${requestUrl}`);
-  const response = await fetch(requestUrl, { method: 'DELETE' });
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Failed to delete conversation (${response.status}): ${errText}`);
-  }
-  return await response.json();
+  return await request<{ success: boolean }>(`/api/v1/ava/conversations/${conversationId}`, {
+    method: 'DELETE',
+  });
 }

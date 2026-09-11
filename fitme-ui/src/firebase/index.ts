@@ -1,4 +1,5 @@
 import { initializeApp } from 'firebase/app';
+// @ts-ignore - getReactNativePersistence is exported by the React Native runtime bundle of firebase/auth
 import { initializeAuth, getReactNativePersistence } from 'firebase/auth';
 import { firebaseConfig } from './config';
 import AsyncStorage from '@react-native-async-storage/async-storage';
