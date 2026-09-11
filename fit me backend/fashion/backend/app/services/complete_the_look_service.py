@@ -1029,7 +1029,7 @@ async def _fetch_slot_candidates(
             meta_query = f"{slot.search_query} buy online Myntra AJIO Amazon Nykaa"
             async with httpx.AsyncClient(timeout=5.0, headers=headers, follow_redirects=True) as client:
                 resp = await client.post("https://html.duckduckgo.com/html/", data={"q": meta_query})
-                if resp.status_code == 200:
+                if resp.status_code == 200 and BeautifulSoup:
                     soup = BeautifulSoup(resp.text, "html.parser")
                     for a_tag in soup.select(".result a"):
                         raw_href = a_tag.get("href", "")
