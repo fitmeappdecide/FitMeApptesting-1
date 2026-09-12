@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "691300275712-dhgvqugar4b3odq5r6sav9vau74ice7s.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.fitme.app",
+            "certificate_hash": "340cf87e8165a4ff838887d2f4b364062f3e216a"
+          }
+        },
+        {
           "client_id": "691300275712-obb2590klau0lqj87nldb2cnd277tidm.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
