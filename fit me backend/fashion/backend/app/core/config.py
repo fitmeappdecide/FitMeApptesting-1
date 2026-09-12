@@ -28,8 +28,8 @@ class Settings(BaseSettings):
     anonymous_website_user_email: str = "testtryon_user@example.com"
 
     # New Supabase configuration
-    supabase_url: str = ""
-    supabase_service_key: str = ""
+    supabase_url: str = "https://smzhdmutffzapshfajyj.supabase.co"
+    supabase_service_key: str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNtemhkbXV0ZmZ6YXBzaGZhanlqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MTc3MzMwNSwiZXhwIjoyMDk3MzQ5MzA1fQ.8hKVg5ux564VEczw7L8DO-u3cavfjxZcSEbwtOvuKEc"
     supabase_storage_bucket: str = "scans"
     supabase_user_photos_bucket: str = "user-photos"
 
