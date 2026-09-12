@@ -397,7 +397,7 @@ async def _generate_gemini_blueprint(
 
         response = await asyncio.to_thread(
             client.models.generate_content,
-            model="gemini-1.5-flash",
+            model="gemini-2.5-flash",
             contents=[prompt],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -700,44 +700,26 @@ async def _fetch_gemini_grounded_candidates(
                 "Only include URLs found via Google Search — do NOT invent or fabricate product URLs."
             )
 
-        # ── Direct REST API call — bypasses SDK 60s deadline ──
-        api_url = (
-            f"https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}"
-            f"/locations/{location}/publishers/google/models/gemini-1.5-flash:generateContent"
-        )
+        # ── Call Vertex AI with Google Search Grounding via official genai.Client ──
+        from google import genai
+        from google.genai import types
 
-        payload = {
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "tools": [{"googleSearch": {}}],
-            "generationConfig": {"temperature": 0.0},
-        }
-
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-        }
-
+        client = genai.Client(vertexai=True, project=project_id, location=location)
         try:
-            async with httpx.AsyncClient(timeout=75.0) as http:
-                r = await http.post(api_url, json=payload, headers=headers)
-        except Exception as http_err:
-            logger.warning(f"[GeminiGrounding] REST call error: {type(http_err).__name__}: {http_err}")
+            response = await asyncio.to_thread(
+                client.models.generate_content,
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    tools=[{"google_search": {}}],
+                    temperature=0.0,
+                ),
+            )
+            text = response.text or ""
+            logger.info(f"[GeminiGrounding] Response length: {len(text)} chars for query: '{query}'")
+        except Exception as api_err:
+            logger.warning(f"[GeminiGrounding] genai call error: {type(api_err).__name__}: {api_err}")
             return []
-
-        if r.status_code != 200:
-            logger.warning(f"[GeminiGrounding] REST API returned {r.status_code}: {r.text[:200]}")
-            return []
-
-        # ── Extract text from REST response ──
-        resp_data = r.json()
-        cands_raw = resp_data.get("candidates", [])
-        if not cands_raw:
-            logger.warning(f"[GeminiGrounding] No candidates in response for '{query}'")
-            return []
-
-        parts = cands_raw[0].get("content", {}).get("parts", [])
-        text = "".join(p.get("text", "") for p in parts)
-        logger.info(f"[GeminiGrounding] REST response length: {len(text)} chars for query: '{query}'")
 
         if not text:
             return []

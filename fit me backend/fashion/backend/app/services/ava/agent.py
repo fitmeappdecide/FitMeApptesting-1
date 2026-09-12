@@ -109,44 +109,37 @@ class AVAAgent:
                 "}"
             )
 
-            api_url = (
-                f"https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}"
-                f"/locations/{location}/publishers/google/models/gemini-1.5-flash:generateContent"
+            import asyncio
+            import base64
+            from google import genai
+            from google.genai import types
+
+            client = genai.Client(vertexai=True, project=project_id, location=location)
+
+            raw_b64 = image_base64
+            mime_type = "image/jpeg"
+            if "," in image_base64:
+                prefix, raw_b64 = image_base64.split(",", 1)
+                if "png" in prefix.lower():
+                    mime_type = "image/png"
+                elif "webp" in prefix.lower():
+                    mime_type = "image/webp"
+
+            img_bytes = base64.b64decode(raw_b64)
+            part_img = types.Part.from_bytes(data=img_bytes, mime_type=mime_type)
+            part_text = f"{sys_instruction}\nUser Prompt: {prompt_text}"
+
+            response = await asyncio.to_thread(
+                client.models.generate_content,
+                model="gemini-2.5-flash",
+                contents=[part_text, part_img],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.2,
+                ),
             )
-
-            payload = {
-                "contents": [
-                    {
-                        "role": "user",
-                        "parts": [
-                            {"text": f"{sys_instruction}\nUser Prompt: {prompt_text}"},
-                            {
-                                "inlineData": {
-                                    "mimeType": mime_type,
-                                    "data": raw_b64,
-                                }
-                            }
-                        ]
-                    }
-                ],
-                "generationConfig": {
-                    "responseMimeType": "application/json",
-                    "temperature": 0.2,
-                }
-            }
-
-            headers = {
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-            }
-
-            async with httpx.AsyncClient(timeout=25.0) as client:
-                r = await client.post(api_url, json=payload, headers=headers)
-                if r.status_code == 200:
-                    cand = r.json().get("candidates", [])
-                    if cand:
-                        text = cand[0].get("content", {}).get("parts", [{}])[0].get("text", "")
-                        return json.loads(text.strip())
+            text = response.text or ""
+            return json.loads(text.strip())
         except Exception as e:
             logger.warning(f"[AVAAgent] Gemini multimodal analysis error: {e}")
         return None
@@ -154,46 +147,19 @@ class AVAAgent:
     async def _generate_text_with_gemini(self, prompt: str) -> Optional[str]:
         project_id = getattr(settings, "vertex_project_id", None) or os.getenv("VERTEX_PROJECT_ID") or "fitme-3ac94"
         location = getattr(settings, "vertex_location", None) or os.getenv("VERTEX_LOCATION") or "us-central1"
-        backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-        gcp_key = os.path.join(backend_dir, "gcp-vertex-key.json")
-        cred_path = gcp_key if os.path.exists(gcp_key) else (os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or getattr(settings, "firebase_credentials_path", None))
-
         try:
-            import google.oauth2.service_account as _sa
-            import google.auth.transport.requests as _tr
-
-            if cred_path and os.path.exists(cred_path):
-                _creds = _sa.Credentials.from_service_account_file(
-                    cred_path,
-                    scopes=["https://www.googleapis.com/auth/cloud-platform"],
-                )
-            else:
-                import google.auth as _auth
-                _creds, _ = _auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-
-            _creds.refresh(_tr.Request())
-            token = _creds.token
-
-            api_url = (
-                f"https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}"
-                f"/locations/{location}/publishers/google/models/gemini-1.5-flash:generateContent"
+            import asyncio
+            from google import genai
+            client = genai.Client(vertexai=True, project=project_id, location=location)
+            res = await asyncio.to_thread(
+                client.models.generate_content,
+                model="gemini-2.5-flash",
+                contents=prompt,
             )
-            payload = {
-                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.3},
-            }
-            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-            async with httpx.AsyncClient(timeout=30.0) as http:
-                r = await http.post(api_url, json=payload, headers=headers)
-                if r.status_code == 200:
-                    data = r.json()
-                    cands = data.get("candidates", [])
-                    if cands:
-                        parts = cands[0].get("content", {}).get("parts", [])
-                        return "".join(p.get("text", "") for p in parts).strip()
+            return res.text
         except Exception as e:
             logger.warning(f"[AVA] _generate_text_with_gemini error: {e}")
-        return None
+            return None
 
     async def process_request(
         self,
