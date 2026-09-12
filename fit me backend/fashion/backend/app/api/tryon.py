@@ -285,7 +285,7 @@ async def start_tryon(
             print(f"Notice: TryOn generation failed ({exc}).")
             job.status = "failed"
             job.result_image_urls = []
-            job.error_message = "Try-on generation temporarily failed. Please ensure a clear full-body photo is uploaded."
+            job.error_message = str(exc)
             job.processing_time_seconds = 0.5
 
         # ------------------------------------------------------------------

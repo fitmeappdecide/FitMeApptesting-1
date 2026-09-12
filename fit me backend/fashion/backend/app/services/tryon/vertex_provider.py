@@ -115,13 +115,20 @@ class VertexProvider(TryOnProvider):
         with TelemetryTimer("VertexProvider.generate_tryon()") as timer:
             start = time.time()
 
+            # Ensure client is initialized
+            if self.client is None:
+                self.__init__()
+
             # 1️⃣ Resolve user image
             user_bytes = b""
             garment_bytes = b""
+            user_error = None
+            garment_error = None
+
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                 try:
                     if not user_image_url or not isinstance(user_image_url, str):
-                        pass
+                        user_error = "User image URL is empty"
                     elif user_image_url.startswith("http://") or user_image_url.startswith("https://"):
                         resp = await client.get(user_image_url)
                         resp.raise_for_status()
@@ -139,12 +146,13 @@ class VertexProvider(TryOnProvider):
                         user_bytes = retrieve_image_bytes_from_encrypted_ref(user_image_url)
                     timer.mark("1. User Image Downloaded")
                 except Exception as e:
-                    print(f"Notice: User image retrieval fallback ({e})")
+                    user_error = str(e)
+                    print(f"Notice: User image retrieval error ({e})")
 
                 # 2️⃣ Download garment image
                 try:
                     if not garment_image_url or not isinstance(garment_image_url, str):
-                        pass
+                        garment_error = "Garment image URL is empty"
                     elif garment_image_url.startswith("http://") or garment_image_url.startswith("https://"):
                         resp = await client.get(garment_image_url)
                         resp.raise_for_status()
@@ -159,93 +167,95 @@ class VertexProvider(TryOnProvider):
                         garment_bytes = retrieve_image_bytes_from_encrypted_ref(garment_image_url)
                     timer.mark("2. Garment Image Downloaded")
                 except Exception as e:
-                    print(f"Notice: Garment image retrieval fallback ({e})")
+                    garment_error = str(e)
+                    print(f"Notice: Garment image retrieval error ({e})")
+
+            if not user_bytes:
+                raise RuntimeError(f"User image could not be loaded: {user_error or 'image data is empty'}")
+            if not garment_bytes:
+                raise RuntimeError(f"Garment image could not be loaded: {garment_error or 'garment data is empty'}")
+            if self.client is None:
+                raise RuntimeError("Google Vertex AI client is not available. Please verify GCP_VERTEX_KEY_JSON.")
 
             person_path = None
             garment_path = None
-            if user_bytes and garment_bytes:
+            try:
+                # Preprocess user image (smart framing if person is small)
+                prepared_user_bytes, prep_report = preprocess_user_image(user_bytes)
+
+                # Preprocess garment reference (SegFormer Ghost-Mannequin isolation)
+                prepared_garment_bytes, garment_report = await garment_preprocessor.preprocess(
+                    garment_bytes,
+                    garment_type=garment_type,
+                    garment_url=garment_image_url,
+                )
+
+                person_image, person_path = self._image_from_bytes(prepared_user_bytes, suffix=".png")
+                garment_image, garment_path = self._image_from_bytes(prepared_garment_bytes, suffix=".png")
+                timer.mark("3. Temp Files Created on Disk")
+
+                source = RecontextImageSource(
+                    person_image=person_image,
+                    product_images=[ProductImage(product_image=garment_image)],
+                )
+                config = RecontextImageConfig(
+                    output_mime_type="image/png",
+                    number_of_images=1,
+                    person_generation="ALLOW_ALL",
+                    safety_filter_level="BLOCK_ONLY_HIGH",
+                )
+
+                # 4️⃣ Call Vertex AI
+                v_start = time.time()
+                print(f"⏱️ [VERTEX AI START] Model: {self.model_name}")
+                response = self.client.models.recontext_image(
+                    model=self.model_name,
+                    source=source,
+                    config=config,
+                )
+                v_duration = time.time() - v_start
+                print(f"⏱️ [VERTEX AI SUCCESS] Model Inference Duration: {v_duration:.4f}s")
+                timer.mark(f"4. Vertex AI Model Inference Complete ({v_duration:.2f}s)")
+
+                generated_bytes = response.generated_images[0].image.image_bytes
+                public_url = ""
                 try:
-                    # Preprocess user image (smart framing if person is small)
-                    prepared_user_bytes, prep_report = preprocess_user_image(user_bytes)
+                    # Optimize to canonical WebP (max 1200px, quality 88) and grid thumbnail (400px width, quality 80)
+                    canonical_bytes, canonical_mime = optimize_tryon_result(generated_bytes, max_dim=1200, quality=88)
+                    thumb_bytes, thumb_mime = create_thumbnail(generated_bytes, target_width=400, quality=80)
 
-                    # Preprocess garment reference (SegFormer Ghost-Mannequin isolation)
-                    prepared_garment_bytes, garment_report = await garment_preprocessor.preprocess(
-                        garment_bytes,
-                        garment_type=garment_type,
-                        garment_url=garment_image_url,
-                    )
+                    ext = "webp" if "webp" in canonical_mime else "jpg"
+                    thumb_ext = "webp" if "webp" in thumb_mime else "jpg"
+                    res_uuid = uuid.uuid4()
 
-                    person_image, person_path = self._image_from_bytes(prepared_user_bytes, suffix=".png")
-                    garment_image, garment_path = self._image_from_bytes(prepared_garment_bytes, suffix=".png")
-                    timer.mark("3. Temp Files Created on Disk")
+                    storage_path = f"tryon_results/{res_uuid}.{ext}"
+                    thumb_storage_path = f"tryon_results/thumb_{res_uuid}.{thumb_ext}"
 
-                    source = RecontextImageSource(
-                        person_image=person_image,
-                        product_images=[ProductImage(product_image=garment_image)],
-                    )
-                    config = RecontextImageConfig(
-                        output_mime_type="image/png",
-                        number_of_images=1,
-                        person_generation="ALLOW_ALL",
-                        safety_filter_level="BLOCK_ONLY_HIGH",
-                    )
+                    upload_image_to_storage(canonical_bytes, storage_path)
+                    upload_image_to_storage(thumb_bytes, thumb_storage_path)
 
-                    # 4️⃣ Call Vertex AI
-                    if self.client:
-                        v_start = time.time()
-                        print(f"⏱️ [VERTEX AI START] Model: {self.model_name}")
-                        response = self.client.models.recontext_image(
-                            model=self.model_name,
-                            source=source,
-                            config=config,
-                        )
-                        v_duration = time.time() - v_start
-                        print(f"⏱️ [VERTEX AI SUCCESS] Model Inference Duration: {v_duration:.4f}s")
-                        timer.mark(f"4. Vertex AI Model Inference Complete ({v_duration:.2f}s)")
+                    signed_res_url = create_signed_photo_url(storage_path, expires_in=7200)
+                    public_url = signed_res_url if signed_res_url else storage_path
+                except Exception as s_err:
+                    print(f"Supabase storage upload notice ({s_err}), using instant high-res Data URI")
+                    import base64
+                    b64_str = base64.b64encode(generated_bytes).decode("utf-8")
+                    public_url = f"data:image/png;base64,{b64_str}"
 
-                        generated_bytes = response.generated_images[0].image.image_bytes
-                        public_url = ""
+                return TryOnResult(
+                    image_urls=[public_url],
+                    provider_name="vertex_ai",
+                    processing_time_seconds=time.time() - start,
+                )
+
+            except Exception as e:
+                print(f"Vertex AI inference error: {e}")
+                raise RuntimeError(f"Vertex AI Try-On failed: {e}") from e
+            finally:
+                for p in (person_path, garment_path):
+                    if p and os.path.exists(p):
                         try:
-                            # Optimize to canonical WebP (max 1200px, quality 88) and grid thumbnail (400px width, quality 80)
-                            canonical_bytes, canonical_mime = optimize_tryon_result(generated_bytes, max_dim=1200, quality=88)
-                            thumb_bytes, thumb_mime = create_thumbnail(generated_bytes, target_width=400, quality=80)
-
-                            ext = "webp" if "webp" in canonical_mime else "jpg"
-                            thumb_ext = "webp" if "webp" in thumb_mime else "jpg"
-                            res_uuid = uuid.uuid4()
-
-                            storage_path = f"tryon_results/{res_uuid}.{ext}"
-                            thumb_storage_path = f"tryon_results/thumb_{res_uuid}.{thumb_ext}"
-
-                            upload_image_to_storage(canonical_bytes, storage_path)
-                            upload_image_to_storage(thumb_bytes, thumb_storage_path)
-
-                            signed_res_url = create_signed_photo_url(storage_path, expires_in=7200)
-                            public_url = signed_res_url if signed_res_url else storage_path
-                        except Exception as s_err:
-                            print(f"Supabase storage upload notice ({s_err}), using instant high-res Data URI")
-                            import base64
-                            b64_str = base64.b64encode(generated_bytes).decode("utf-8")
-                            public_url = f"data:image/png;base64,{b64_str}"
-
-                        return TryOnResult(
-                            image_urls=[public_url],
-                            provider_name="vertex_ai",
-                            processing_time_seconds=time.time() - start,
-                        )
-
-                except Exception as e:
-                    print(f"Vertex AI inference notice ({e})")
-                finally:
-                    for p in (person_path, garment_path):
-                        if p and os.path.exists(p):
-                            try:
-                                os.remove(p)
-                            except Exception:
-                                pass
-
-            # Do NOT return the garment catalog image on failure, as that confuses users
-            # by showing the store model under 'ON YOU'. Raise an error so the tryon job
-            # fails gracefully and allows the user to retry with a clean photo.
-            raise RuntimeError("Try-on generation temporarily failed. Please ensure a clear full-body photo is uploaded.")
+                            os.remove(p)
+                        except Exception:
+                            pass
 
