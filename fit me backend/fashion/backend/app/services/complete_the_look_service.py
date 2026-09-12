@@ -397,7 +397,7 @@ async def _generate_gemini_blueprint(
 
         response = await asyncio.to_thread(
             client.models.generate_content,
-            model="gemini-2.5-flash",
+            model="gemini-1.5-flash",
             contents=[prompt],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -703,7 +703,7 @@ async def _fetch_gemini_grounded_candidates(
         # ── Direct REST API call — bypasses SDK 60s deadline ──
         api_url = (
             f"https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}"
-            f"/locations/{location}/publishers/google/models/gemini-2.5-flash:generateContent"
+            f"/locations/{location}/publishers/google/models/gemini-1.5-flash:generateContent"
         )
 
         payload = {

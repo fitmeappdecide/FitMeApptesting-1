@@ -59,25 +59,29 @@ class LocalPersonDetector:
 
     def _get_model(self):
         if self._model is None:
-            from ultralytics import YOLO
-            t0 = time.perf_counter()
-            curr_dir = os.path.abspath(os.path.dirname(__file__))
-            candidates = [
-                os.path.join(curr_dir, "..", "..", "..", "yolov8n.pt"),
-                os.path.join(curr_dir, "..", "..", "yolov8n.pt"),
-                os.path.join(os.getcwd(), "fit me backend", "fashion", "backend", "yolov8n.pt"),
-                os.path.join(os.getcwd(), "yolov8n.pt"),
-            ]
-            model_target = "yolov8n.pt"
-            for cand in candidates:
-                norm_cand = os.path.normpath(cand)
-                if os.path.exists(norm_cand):
-                    model_target = norm_cand
-                    break
-            self._model = YOLO(model_target)
-            load_ms = (time.perf_counter() - t0) * 1000.0
-            print(f"⏱️ [PERSON DETECTOR] Loaded local YOLOv8n from '{model_target}' in {load_ms:.2f}ms")
-        return self._model
+            try:
+                from ultralytics import YOLO
+                t0 = time.perf_counter()
+                curr_dir = os.path.abspath(os.path.dirname(__file__))
+                candidates = [
+                    os.path.join(curr_dir, "..", "..", "..", "yolov8n.pt"),
+                    os.path.join(curr_dir, "..", "..", "yolov8n.pt"),
+                    os.path.join(os.getcwd(), "fit me backend", "fashion", "backend", "yolov8n.pt"),
+                    os.path.join(os.getcwd(), "yolov8n.pt"),
+                ]
+                model_target = "yolov8n.pt"
+                for cand in candidates:
+                    norm_cand = os.path.normpath(cand)
+                    if os.path.exists(norm_cand):
+                        model_target = norm_cand
+                        break
+                self._model = YOLO(model_target)
+                load_ms = (time.perf_counter() - t0) * 1000.0
+                print(f"⏱️ [PERSON DETECTOR] Loaded local YOLOv8n from '{model_target}' in {load_ms:.2f}ms")
+            except Exception as e:
+                print(f"Notice: YOLO person detector unavailable ({e}), passthrough mode active.")
+                self._model = False
+        return self._model if self._model is not False else None
 
     def detect(self, image: Image.Image, min_confidence: float = 0.30) -> DetectionResult:
         """Detect persons in a PIL Image.
@@ -104,6 +108,16 @@ class LocalPersonDetector:
             )
 
         model = self._get_model()
+        if model is None:
+            return DetectionResult(
+                detected=False,
+                person_count=0,
+                primary_person=None,
+                all_persons=[],
+                inference_time_ms=0.0,
+                image_width=w,
+                image_height=h,
+            )
         results = model.predict(img_rgb, classes=[0], conf=min_confidence, verbose=False)
         
         persons: List[PersonBox] = []

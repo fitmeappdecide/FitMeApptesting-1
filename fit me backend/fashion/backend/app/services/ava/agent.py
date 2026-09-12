@@ -111,7 +111,7 @@ class AVAAgent:
 
             api_url = (
                 f"https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}"
-                f"/locations/{location}/publishers/google/models/gemini-2.5-flash:generateContent"
+                f"/locations/{location}/publishers/google/models/gemini-1.5-flash:generateContent"
             )
 
             payload = {
@@ -176,7 +176,7 @@ class AVAAgent:
 
             api_url = (
                 f"https://{location}-aiplatform.googleapis.com/v1/projects/{project_id}"
-                f"/locations/{location}/publishers/google/models/gemini-2.5-flash:generateContent"
+                f"/locations/{location}/publishers/google/models/gemini-1.5-flash:generateContent"
             )
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],

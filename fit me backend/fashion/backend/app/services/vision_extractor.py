@@ -42,7 +42,7 @@ class GeminiVisionExtractor(VisionExtractor):
         )
 
     def extract_product(self, image_bytes: bytes) -> Dict[str, Any]:
-        model = "gemini-2.5-flash"
+        model = "gemini-1.5-flash"
         
         prompt = (
             "Analyze this screenshot of a clothing product. Extract the primary garment details. "

@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.models.brand import Brand
 from app.models.garment import Garment
 from app.models.tryon_job import TryOnJob
 from app.schemas.link_comparison import URLProductCompareRequest, URLProductCompareResponse
