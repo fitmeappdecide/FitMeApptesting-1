@@ -16,6 +16,17 @@ buildscript {
     }
 }
 
+def findNode() {
+    def prop = findProperty('nodeExecutable')
+    if (prop) return prop
+    def env = System.getenv('NODE_BINARY')
+    if (env) return env
+    def userHome = System.getProperty('user.home')
+    def pnpmPath = "${userHome}/Library/pnpm/bin/node"
+    if (new File(pnpmPath).exists()) return pnpmPath
+    return 'node'
+}
+
 ext {
     buildToolsVersion = findProperty('android.buildToolsVersion') ?: '34.0.0'
     minSdkVersion = Integer.parseInt(findProperty('android.minSdkVersion') ?: '23')
@@ -23,16 +34,6 @@ ext {
     targetSdkVersion = Integer.parseInt(findProperty('android.targetSdkVersion') ?: '34')
 
     ndkVersion = "26.1.10909125"
-    def findNode() {
-        def prop = findProperty('nodeExecutable')
-        if (prop) return prop
-        def env = System.getenv('NODE_BINARY')
-        if (env) return env
-        def userHome = System.getProperty('user.home')
-        def pnpmPath = "${userHome}/Library/pnpm/bin/node"
-        if (new File(pnpmPath).exists()) return pnpmPath
-        return 'node'
-    }
     nodeExecutable = findNode()
 }
 

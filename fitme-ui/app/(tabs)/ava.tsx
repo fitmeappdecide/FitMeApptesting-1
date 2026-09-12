@@ -349,7 +349,7 @@ export default function Ava() {
         {
           id: `err_${Date.now()}`,
           role: 'ava',
-          text: `Backend Connection Error: Unable to reach AVA FastAPI server at http://localhost:8000 (${errMsg}).`,
+          text: `Connection Error: Unable to reach AVA styling service (${errMsg}).`,
           isError: true,
         },
       ]);
