@@ -55,6 +55,18 @@ class AVAAgent:
             location = getattr(settings, "vertex_location", None) or os.getenv("VERTEX_LOCATION") or "us-central1"
             backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
             gcp_key = os.path.join(backend_dir, "gcp-vertex-key.json")
+            gcp_key_env = os.environ.get("GCP_VERTEX_KEY_JSON") or os.environ.get("GCP_VERTEX_KEY_B64")
+            if gcp_key_env and not os.path.exists(gcp_key):
+                try:
+                    raw_val = gcp_key_env.strip()
+                    if not raw_val.startswith("{"):
+                        import base64
+                        raw_val = base64.b64decode(raw_val).decode("utf-8").strip()
+                    with open(gcp_key, "w") as f:
+                        f.write(raw_val)
+                except Exception:
+                    pass
+
             cred_path = gcp_key if os.path.exists(gcp_key) else (os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or getattr(settings, "firebase_credentials_path", None))
 
             if cred_path and os.path.exists(cred_path):

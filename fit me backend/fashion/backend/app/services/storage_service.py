@@ -19,10 +19,10 @@ def build_encrypted_storage_ref(prefix: str, filename: str) -> str:
 
 def cdn_url_for_private_ref(private_ref: str) -> str:
     """Generate a URL for a storage reference in Supabase Storage.
-    For private references (tryon_results, scans, user_photos), delegates to signed URL.
+    For private references (tryon_results, scans, user_photos, pi_scans), delegates to signed URL.
     For public/catalog assets, returns public CDN URL.
     """
-    if any(private_ref.startswith(p) for p in ("tryon_results/", "scans/", "user_photos/")) or "/tryon_results/" in private_ref:
+    if any(private_ref.startswith(p) for p in ("tryon_results/", "scans/", "user_photos/", "pi_scans/")) or "/tryon_results/" in private_ref or "/pi_scans/" in private_ref:
         signed = create_signed_photo_url(private_ref)
         if signed:
             return signed
