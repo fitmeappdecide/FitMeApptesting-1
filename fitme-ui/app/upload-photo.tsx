@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, Image, Alert, ScrollView,
+  View, Text, StyleSheet, TouchableOpacity, Image, Alert, ScrollView, ActivityIndicator,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,6 +11,7 @@ import { CachedImage } from '../src/components/CachedImage';
 import { Colors, Spacing, Radii } from '../src/constants/theme';
 import { useSession } from '../src/services/session';
 import { useSavedPhotosStore } from '../src/services/savedPhotosStore';
+import { productApi } from '../src/services/api';
 
 const guideFullbody = require('../assets/images/fullphoto.png');
 const guideCloseup  = require('../assets/images/half.png');
@@ -18,6 +19,10 @@ const guideCloseup  = require('../assets/images/half.png');
 export default function UploadPhoto() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const productImageUri = useSession((s) => s.productImageUri);
+  const setProductImageUri = useSession((s) => s.setProductImageUri);
+  const productId = useSession((s) => s.productId);
+  const setProductId = useSession((s) => s.setProductId);
   const sessionLocalPhotoUri = useSession((s) => s.localPhotoUri);
   const setLocalPhotoUri = useSession((s) => s.setLocalPhotoUri);
   const savedPhotoId = useSession((s) => s.savedPhotoId);
@@ -28,6 +33,7 @@ export default function UploadPhoto() {
 
   const [photoUri, setPhotoUri] = useState<string | null>(sessionLocalPhotoUri);
   const [selectedSavedId, setSelectedSavedId] = useState<string | null>(savedPhotoId);
+  const [submitting, setSubmitting] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -40,6 +46,15 @@ export default function UploadPhoto() {
       setPhotoUri(sessionLocalPhotoUri);
     }
   }, [sessionLocalPhotoUri]);
+
+  // If user has saved model photos and no model photo is selected yet, auto-select the first saved photo
+  useEffect(() => {
+    if (savedPhotos.length > 0 && !selectedSavedId && !photoUri) {
+      const defaultPhoto = savedPhotos[0];
+      const uri = defaultPhoto.signed_url || defaultPhoto.storage_path;
+      selectSavedPhoto(defaultPhoto.id, uri, defaultPhoto.display_name);
+    }
+  }, [savedPhotos]);
 
   useEffect(() => {
     if (savedPhotos.length > 0 && selectedSavedId) {
@@ -116,11 +131,65 @@ export default function UploadPhoto() {
     }
   };
 
-  const handleContinue = () => {
-    if (!photoUri) return;
-    setLocalPhotoUri(photoUri);
-    router.push('/processing');
+  const handleRetakeOutfitReference = async () => {
+    try {
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Camera access needed', 'Enable camera access in Settings to capture an outfit image.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.8,
+        allowsEditing: false,
+      });
+      if (!result.canceled && result.assets[0]) {
+        const uri = result.assets[0].uri;
+        setProductId('');
+        setProductImageUri(uri);
+      }
+    } catch (err) {
+      console.warn('Retake camera error:', err);
+    }
   };
+
+  const handleContinue = async () => {
+    if (!photoUri) return;
+
+    setSubmitting(true);
+    try {
+      // 1. If background garment registration promise is pending from import.tsx, await it first
+      const pendingPromise = useSession.getState().garmentRegistrationPromise;
+      if (pendingPromise && !productId) {
+        console.log('[TRY-ON] Awaiting pending background garment registration promise...');
+        const res = await pendingPromise;
+        setProductId(res.product_id);
+      }
+
+      // 2. If we have an un-registered outfit reference image (from bottom camera), register it as garment first
+      if (productImageUri && !productId && !pendingPromise) {
+        console.log('[QUICK TRY-ON] Registering camera outfit reference image as garment...');
+        const res = await productApi.uploadGarment(productImageUri, { title: 'Quick Reference Outfit' });
+        setProductId(res.product_id);
+      }
+
+      if (!productImageUri && !productId && !useSession.getState().productId) {
+        Alert.alert('Outfit Reference Required', 'Please select or capture an outfit to try on.');
+        return;
+      }
+
+      setLocalPhotoUri(photoUri);
+      router.push('/processing');
+    } catch (err: any) {
+      console.error('[TRY-ON] Error preparing garment reference:', err);
+      Alert.alert('Upload Error', err?.message || 'Unable to prepare outfit reference for try-on. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const hasOutfitReference = Boolean(productImageUri || productId);
+  const isContinueDisabled = submitting || !photoUri || !hasOutfitReference;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -131,24 +200,53 @@ export default function UploadPhoto() {
           <Text style={styles.privacyText}>Your photos are private and never shared.</Text>
         </View>
 
-        {/* Upload area */}
+        {/* 1. OUTFIT TO TRY (Reference Outfit Section when bottom camera image exists) */}
+        {productImageUri ? (
+          <View style={styles.outfitRefCard}>
+            <View style={styles.outfitRefHeader}>
+              <View style={styles.outfitTag}>
+                <Ionicons name="sparkles" size={12} color="#FFFFFF" />
+                <Text style={styles.outfitTagText}>OUTFIT TO TRY</Text>
+              </View>
+              <TouchableOpacity onPress={handleRetakeOutfitReference} style={styles.retakeBtn} activeOpacity={0.7}>
+                <Ionicons name="camera-reverse-outline" size={14} color={Colors.accent} />
+                <Text style={styles.retakeBtnText}>Change outfit</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.outfitImgWrap}>
+              <CachedImage uri={productImageUri} style={styles.outfitImg} />
+            </View>
+          </View>
+        ) : null}
+
+        {/* 2. CHOOSE YOUR PHOTO (User Model Photo Section) */}
+        <View style={styles.sectionHeaderWrap}>
+          <Text style={styles.sectionHeading}>
+            {productImageUri ? 'Choose your model photo' : 'Add your photo'}
+          </Text>
+          <Text style={styles.sectionSubheading}>
+            Select your model photo below to try on the outfit.
+          </Text>
+        </View>
+
+        {/* User Model Photo Upload / Preview Area */}
         <View style={styles.uploadArea}>
           {photoUri ? (
             <CachedImage uri={photoUri} style={styles.previewImg} />
           ) : (
             <View style={styles.cameraCircle}>
-              <Ionicons name="camera-outline" size={32} color={Colors.mutedForeground} />
+              <Ionicons name="person-outline" size={32} color={Colors.mutedForeground} />
             </View>
           )}
           {!photoUri && (
             <>
-              <Text style={styles.uploadTitle}>Add your photo</Text>
+              <Text style={styles.uploadTitle}>Select model photo</Text>
               <Text style={styles.uploadSub}>Stand straight · plain background · full body</Text>
             </>
           )}
         </View>
 
-        {/* Buttons */}
+        {/* User Model Photo Camera & Gallery Action Buttons */}
         <View style={styles.btnsRow}>
           <TouchableOpacity style={styles.outlineBtn} onPress={takePhoto}>
             <Ionicons name="camera-outline" size={16} color={Colors.foreground} />
@@ -225,12 +323,16 @@ export default function UploadPhoto() {
       </ScrollView>
       <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
         <TouchableOpacity
-          style={[styles.continueBtn, !photoUri && styles.continueBtnDisabled]}
+          style={[styles.continueBtn, isContinueDisabled && styles.continueBtnDisabled]}
           onPress={handleContinue}
-          disabled={!photoUri}
+          disabled={isContinueDisabled}
           activeOpacity={0.85}
         >
-          <Text style={styles.continueBtnText}>Continue</Text>
+          {submitting ? (
+            <ActivityIndicator color={Colors.primaryForeground} />
+          ) : (
+            <Text style={styles.continueBtnText}>Continue</Text>
+          )}
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -243,8 +345,79 @@ const styles = StyleSheet.create({
   scrollContent: { paddingHorizontal: Spacing.xl, paddingBottom: Spacing.lg },
   privacyNote: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: Spacing.md, marginTop: Spacing.xs },
   privacyText: { fontSize: 12, color: Colors.mutedForeground },
+
+  /* Outfit Reference Card */
+  outfitRefCard: {
+    backgroundColor: '#FAF3EC',
+    borderRadius: Radii.xxl,
+    borderWidth: 1,
+    borderColor: '#E8DED2',
+    padding: Spacing.md,
+    marginBottom: Spacing.lg,
+  },
+  outfitRefHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  outfitTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#A86248',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: Radii.full,
+  },
+  outfitTagText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  retakeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  retakeBtnText: {
+    fontSize: 12,
+    color: Colors.accent,
+    fontWeight: '500',
+  },
+  outfitImgWrap: {
+    width: '100%',
+    height: 180,
+    borderRadius: Radii.xl,
+    overflow: 'hidden',
+    backgroundColor: Colors.muted,
+  },
+  outfitImg: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+
+  sectionHeaderWrap: {
+    marginBottom: 10,
+  },
+  sectionHeading: {
+    fontFamily: 'serif',
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.foreground,
+  },
+  sectionSubheading: {
+    fontSize: 12,
+    color: Colors.mutedForeground,
+    marginTop: 2,
+  },
+
   uploadArea: {
-    width: '100%', height: 450, backgroundColor: Colors.muted, borderRadius: Radii.xxl,
+    width: '100%', height: 320, backgroundColor: Colors.muted, borderRadius: Radii.xxl,
     alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.md, gap: 8, overflow: 'hidden',
   },
   previewImg: { ...StyleSheet.absoluteFillObject, resizeMode: 'cover' },
@@ -330,4 +503,5 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
 });
+
 

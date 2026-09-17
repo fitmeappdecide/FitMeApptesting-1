@@ -122,11 +122,13 @@ export function CachedImage({
     };
   }, [uri]);
 
+  const [hasError, setHasError] = useState(false);
+
   if (source) {
     return <Image source={source} style={style} {...props} />;
   }
 
-  if (!localUri) {
+  if (!localUri || hasError) {
     return <View style={[{ backgroundColor: placeholderColor }, style]} />;
   }
 
@@ -135,10 +137,7 @@ export function CachedImage({
       source={{ uri: localUri }}
       style={style}
       onError={() => {
-        // Gracefully fallback to high-quality placeholder if network URL fails
-        if (localUri && !localUri.includes('photo-1515886657613-9f3515b0c78f')) {
-          setLocalUri('https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80');
-        }
+        setHasError(true);
       }}
       {...props}
     />

@@ -22,7 +22,11 @@ def cdn_url_for_private_ref(private_ref: str) -> str:
     For private references (tryon_results, scans, user_photos, pi_scans), delegates to signed URL.
     For public/catalog assets, returns public CDN URL.
     """
-    if any(private_ref.startswith(p) for p in ("tryon_results/", "scans/", "user_photos/", "pi_scans/")) or "/tryon_results/" in private_ref or "/pi_scans/" in private_ref:
+    if (
+        any(private_ref.startswith(p) for p in ("tryon_results/", "scans/", "user_photos/", "pi_scans/", "garments/"))
+        or "/tryon_results/" in private_ref
+        or "/pi_scans/" in private_ref
+    ):
         signed = create_signed_photo_url(private_ref)
         if signed:
             return signed
@@ -347,7 +351,7 @@ def create_signed_photo_url(storage_path: str, expires_in: int = 7200) -> str:
         res = bucket.create_signed_url(clean_path, expires_in)
         signed = ""
         if isinstance(res, dict):
-            signed = res.get("signedURL") or res.get("signedUrl") or res.get("url") or ""
+            signed = res.get("signedURL") or res.get("signedUrl") or res.get("signed_url") or res.get("url") or res.get("path") or ""
         elif isinstance(res, str):
             signed = res
         if signed:
@@ -384,7 +388,13 @@ def sign_if_private(url_or_ref: str, expires_in: int = 7200) -> str:
     elif f"/{bucket_name}/" in clean_path:
         clean_path = clean_path.split(f"/{bucket_name}/", 1)[1]
         is_private = True
-    elif clean_path.startswith("tryon_results/") or clean_path.startswith("scans/") or clean_path.startswith("user_photos/"):
+    elif (
+        clean_path.startswith("tryon_results/")
+        or clean_path.startswith("scans/")
+        or clean_path.startswith("user_photos/")
+        or clean_path.startswith("garments/")
+        or clean_path.startswith("pi_scans/")
+    ):
         is_private = True
     elif clean_path.startswith(f"{bucket_name}/"):
         clean_path = clean_path[len(bucket_name) + 1 :]

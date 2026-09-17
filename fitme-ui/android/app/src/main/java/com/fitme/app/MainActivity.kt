@@ -17,6 +17,23 @@ class MainActivity : ReactActivity() {
     // This is required for expo-splash-screen.
     setTheme(R.style.AppTheme);
     super.onCreate(null)
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      window.navigationBarColor = android.graphics.Color.parseColor("#F8EEE9")
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        window.isNavigationBarContrastEnforced = false
+      }
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        window.insetsController?.setSystemBarsAppearance(
+          android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
+          android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+        )
+      } else {
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = window.decorView.systemUiVisibility or
+          android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+      }
+    }
   }
 
   /**

@@ -60,6 +60,27 @@ CATEGORY_LABEL_MAP: dict[str, list[int]] = {
     # 5. Ethnic Sets (Saree, Lehenga)
     "saree": [4, 5, 7, 17],
     "lehenga": [4, 5, 7, 17],
+
+    # 6. Footwear / Shoes / Slippers / Heels / Mules / Sandals / Boots (Strictly Left-shoe [9] & Right-shoe [10])
+    "shoes": [9, 10],
+    "shoe": [9, 10],
+    "slipper": [9, 10],
+    "slippers": [9, 10],
+    "heel": [9, 10],
+    "heels": [9, 10],
+    "mule": [9, 10],
+    "mules": [9, 10],
+    "sandal": [9, 10],
+    "sandals": [9, 10],
+    "flats": [9, 10],
+    "flat": [9, 10],
+    "sneaker": [9, 10],
+    "sneakers": [9, 10],
+    "boot": [9, 10],
+    "boots": [9, 10],
+    "footwear": [9, 10],
+    "footwear_set": [9, 10],
+    "apparel": [4, 5, 6, 7, 17],
 }
 
 SKIN_AND_LIMB_LABELS = [11, 12, 13, 14, 15]  # Face, Legs, Arms
@@ -158,9 +179,9 @@ class GarmentPreprocessor:
                 "duration_ms": 0.0,
             }
 
-        # 1. Unsupported non-apparel categories bypass SegFormer gracefully
+        # 1. Unknown / undefined categories bypass SegFormer gracefully
         norm_type = (garment_type or "top").lower()
-        if norm_type in ("shoes", "unknown"):
+        if norm_type in ("unknown",):
             return image_bytes, {
                 "status": "PASSTHROUGH_NON_APPAREL",
                 "is_fallback": False,
@@ -278,9 +299,10 @@ class GarmentPreprocessor:
             target_mask_arr = np.isin(pred_seg, target_labels).astype(np.uint8) * 255
             coverage_pct = (np.count_nonzero(target_mask_arr) / (w * h)) * 100.0
 
-            # 4. Fail-safe validation: coverage must be between 4% and 92%
-            if coverage_pct < 4.0 or coverage_pct > 92.0:
-                print(f"ℹ️ [GARMENT PREPROCESS] Coverage {coverage_pct:.1f}% out of safe bounds [4%, 92%] -> fallback to raw bytes.")
+            # 4. Fail-safe validation: coverage must be within safe bounds
+            min_coverage = 1.0 if target_labels == [9, 10] else 4.0
+            if coverage_pct < min_coverage or coverage_pct > 92.0:
+                print(f"ℹ️ [GARMENT PREPROCESS] Coverage {coverage_pct:.1f}% out of safe bounds [{min_coverage}%, 92%] -> fallback to raw bytes.")
                 return image_bytes, True, coverage_pct, inf_dur
 
             # 5. Morphological boundary protection & skin exclusion

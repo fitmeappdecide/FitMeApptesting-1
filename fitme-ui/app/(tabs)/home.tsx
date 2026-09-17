@@ -82,18 +82,92 @@ function getComparisonTitle(item: PIHistoryItem): string {
   return item.profile?.detected_title || item.match_label || 'Garment Item';
 }
 
+function getTryOnCardImageUri(item: any): string {
+  if (!item) return 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=400&q=80';
+
+  // 1. Check thumbnail_url (local cached image URI or remote CDN thumbnail)
+  if (item.thumbnail_url && typeof item.thumbnail_url === 'string' && item.thumbnail_url.trim().length > 0) {
+    return item.thumbnail_url.trim();
+  }
+
+  // 2. Check result_image_urls array
+  if (Array.isArray(item.result_image_urls) && item.result_image_urls.length > 0) {
+    const first = item.result_image_urls[0];
+    if (typeof first === 'string' && first.trim().length > 0) {
+      return first.trim();
+    }
+    if (first && typeof first === 'object' && first.url && typeof first.url === 'string' && first.url.trim().length > 0) {
+      return first.url.trim();
+    }
+  }
+
+  // 3. Stringified result_image_urls
+  if (typeof item.result_image_urls === 'string' && item.result_image_urls.trim().length > 0) {
+    try {
+      const parsed = JSON.parse(item.result_image_urls);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const pFirst = parsed[0];
+        if (typeof pFirst === 'string' && pFirst.trim().length > 0) return pFirst.trim();
+        if (pFirst && typeof pFirst === 'object' && pFirst.url) return pFirst.url.trim();
+      }
+    } catch {
+      return item.result_image_urls.trim();
+    }
+  }
+
+  // 4. Single result_image_url / result_url / image_url / url
+  if (item.result_image_url && typeof item.result_image_url === 'string' && item.result_image_url.trim().length > 0) {
+    return item.result_image_url.trim();
+  }
+  if (item.result_url && typeof item.result_url === 'string' && item.result_url.trim().length > 0) {
+    return item.result_url.trim();
+  }
+
+  // 5. Garment image URLs as fallback
+  if (item.garment_image_url && typeof item.garment_image_url === 'string' && item.garment_image_url.trim().length > 0) {
+    return item.garment_image_url.trim();
+  }
+  if (Array.isArray(item.garment_images) && item.garment_images.length > 0) {
+    const gFirst = item.garment_images[0];
+    if (typeof gFirst === 'string' && gFirst.trim().length > 0) return gFirst.trim();
+    if (gFirst && typeof gFirst === 'object' && gFirst.url) return gFirst.url.trim();
+  }
+
+  // 6. Generic fields
+  if (item.image_url && typeof item.image_url === 'string' && item.image_url.trim().length > 0) {
+    return item.image_url.trim();
+  }
+  if (item.image && typeof item.image === 'string' && item.image.trim().length > 0) {
+    return item.image.trim();
+  }
+
+  return 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=400&q=80';
+}
+
 export default function Home() {
   const [url, setUrl] = useState('');
   const [recentComparisons, setRecentComparisons] = useState<PIHistoryItem[]>([]);
   const [cachedTryons, setCachedTryons] = useState<TryOnHistoryItem[]>([]);
-  const { generatedLooks, fetchLooks, toggleSave: toggleLookSave, loading: looksLoading } = useLooksStore();
-  const recentTryons = generatedLooks.length > 0 ? generatedLooks.slice(0, 8) : cachedTryons.slice(0, 8);
+  const { generatedLooks, savedLooks, fetchLooks, toggleSave: toggleLookSave, loading: looksLoading } = useLooksStore();
+
+  const allLooks = React.useMemo(() => {
+    const map = new Map<string, TryOnHistoryItem>();
+    [...generatedLooks, ...savedLooks, ...cachedTryons].forEach((item) => {
+      if (item && item.id && !map.has(item.id)) {
+        map.set(item.id, item);
+      }
+    });
+    return Array.from(map.values());
+  }, [generatedLooks, savedLooks, cachedTryons]);
+
+  const recentTryons = allLooks.slice(0, 8);
   const router = useRouter();
   const params = useLocalSearchParams<{ error?: string }>();
   
   const setSourceUrl = useSession((s) => s.setSourceUrl);
   const setProductImageUri = useSession((s) => s.setProductImageUri);
   const setExtractedProduct = useSession((s) => s.setExtractedProduct);
+  const setProductId = useSession((s) => s.setProductId);
   const { isPremium } = useUserStore();
 
   const [inlineMsg, setInlineMsg] = useState<string | null>(null);
@@ -131,11 +205,12 @@ export default function Home() {
 
   // Keep local cachedTryons in sync with store
   useEffect(() => {
-    if (generatedLooks.length > 0) {
-      setCachedTryons(generatedLooks.slice(0, 8));
-      AsyncStorage.setItem('fitme_home_recent_tryons', JSON.stringify(generatedLooks.slice(0, 8))).catch(() => {});
+    const list = generatedLooks.length > 0 ? generatedLooks : savedLooks;
+    if (list.length > 0) {
+      setCachedTryons(list.slice(0, 8));
+      AsyncStorage.setItem('fitme_home_recent_tryons', JSON.stringify(list.slice(0, 8))).catch(() => {});
     }
-  }, [generatedLooks]);
+  }, [generatedLooks, savedLooks]);
 
   // Instant load from mobile device storage on mount
   useEffect(() => {
@@ -228,6 +303,7 @@ export default function Home() {
     if (!result.canceled && result.assets[0]) {
       setExtractedProduct(null);
       setSourceUrl(null);
+      setProductId('');
       setProductImageUri(result.assets[0].uri);
       router.push('/import');
     }
@@ -243,6 +319,7 @@ export default function Home() {
     if (!result.canceled && result.assets[0]) {
       setExtractedProduct(null);
       setSourceUrl(null);
+      setProductId('');
       setProductImageUri(result.assets[0].uri);
       router.push('/import');
     }
@@ -387,10 +464,7 @@ export default function Home() {
           ) : (
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               {recentTryons.map((p) => {
-                const imgUri =
-                  p.result_image_urls && p.result_image_urls.length > 0
-                    ? p.result_image_urls[0]
-                    : 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=400&q=80';
+                const imgUri = getTryOnCardImageUri(p);
                 return (
                   <Link href={{ pathname: '/result', params: { jobId: p.id } } as any} key={p.id} asChild>
                     <TouchableOpacity style={styles.productCard} activeOpacity={0.85}>

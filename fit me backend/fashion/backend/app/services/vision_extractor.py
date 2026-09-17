@@ -52,7 +52,7 @@ class GeminiVisionExtractor(VisionExtractor):
             '  "title": "The name of the product",\n'
             '  "brand": "The brand of the product (or null if not found)",\n'
             '  "price": "The price of the product as a string (or null)",\n'
-            '  "garment_type": "The type of garment (e.g., dress, top, bottom, outer)",\n'
+            '  "garment_type": "The type of garment (e.g., dress, top, bottom, outer, shoes, slippers, heels, sandals, mules)",\n'
             '  "bounding_box": [ymin, xmin, ymax, xmax] // A list of 4 integers representing the normalized bounding box (0-1000) of the primary garment isolated from distractions.\n'
             "}"
         )

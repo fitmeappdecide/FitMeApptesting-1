@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Image, Animated } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Dimensions, Image, Animated, Platform } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -74,13 +74,29 @@ export default function Processing() {
   useEffect(() => {
     const interval = setInterval(() => {
       setProgress((prev) => {
+        if (prev >= 100) return 100;
+
+        if (Platform.OS === 'android') {
+          const target = targetProgressRef.current;
+          if (prev < target) {
+            const diff = target - prev;
+            const step = Math.max(0.3, diff * 0.1);
+            return Math.min(target, prev + step);
+          } else if (prev < 99) {
+            // Asymptotic creep towards 99% ceiling so Android progress is continuously active during VTON inference
+            const creep = Math.max(0.04, (99 - prev) * 0.02);
+            return Math.min(99, prev + creep);
+          }
+          return prev;
+        }
+
+        // Original iOS ticker behavior (UNTOUCHED)
         const target = targetProgressRef.current;
         if (prev < target) {
           const diff = target - prev;
           const step = Math.max(0.4, diff * 0.12);
           return Math.min(target, prev + step);
         } else if (target < 95 && prev < 95) {
-          // Continuous organic active tick so it keeps moving smoothly
           return prev + 0.18;
         }
         return prev;
@@ -262,8 +278,17 @@ export default function Processing() {
 
   const handleRetry = () => {
     isPipelineRunningRef.current = false;
-    pipelineStartedRef.current = true;
-    startPipeline();
+    pipelineStartedRef.current = false;
+    setErrorType(null);
+    setErrorMsg(null);
+    // Reset stale product ID if try-on failed so fresh registration occurs
+    if (useSession.getState().productImageUri) {
+      useSession.getState().setProductId('');
+    }
+    setTimeout(() => {
+      pipelineStartedRef.current = true;
+      startPipeline();
+    }, 50);
   };
 
   const handleCancel = () => {
@@ -315,7 +340,11 @@ export default function Processing() {
             </View>
 
             <View style={styles.infoContainer}>
-              <Text style={styles.percentText}>{Math.min(100, Math.round(progress))}%</Text>
+              <Text style={styles.percentText}>
+                {Platform.OS === 'android'
+                  ? (progress >= 100 ? 100 : Math.min(99, Math.floor(progress)))
+                  : Math.min(100, Math.round(progress))}%
+              </Text>
               <Text style={styles.statusText}>{statusText}</Text>
 
               <View style={styles.progressBarTrack}>

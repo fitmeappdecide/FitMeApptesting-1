@@ -22,3 +22,7 @@ export async function extractProduct(url: string): Promise<Product> {
 export function addExtractionProgressListener(listener: (event: { progress: number }) => void): Subscription {
   return emitter.addListener('extractionProgress', listener);
 }
+
+export async function shareImageWithText(imagePath: string, message: string, dialogTitle: string = 'Share your look'): Promise<boolean> {
+  return await FitMeExtraction.shareImageWithText(imagePath, message, dialogTitle);
+}

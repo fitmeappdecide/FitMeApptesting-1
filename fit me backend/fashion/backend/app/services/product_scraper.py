@@ -44,6 +44,8 @@ def parse_price(text: Any) -> Optional[str]:
 
 def detect_garment_type(title: str, url: str) -> str:
     combined = f"{title} {url}".lower()
+    if any(k in combined for k in ["shoe", "shoes", "slipper", "slippers", "heel", "heels", "mule", "mules", "sandal", "sandals", "flat", "flats", "boot", "boots", "sneaker", "sneakers", "footwear"]):
+        return "shoes"
     if any(k in combined for k in ["kurta", "kurti", "saree", "sari", "lehenga", "salwar", "anarkali", "sherwani"]):
         return "ethnic"
     if any(k in combined for k in ["dress", "gown", "frock", "midi", "maxi", "slip"]):

@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Image, ScrollView,
-  Modal, Alert, ActivityIndicator, Platform, Linking, useWindowDimensions,
+  Modal, Alert, ActivityIndicator, Platform, Linking, useWindowDimensions, Share,
 } from 'react-native';
 import { useRouter, useLocalSearchParams, Link } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -10,6 +10,7 @@ import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { AppHeader } from '../src/components/AppHeader';
 import { CachedImage } from '../src/components/CachedImage';
+import { ZoomableImageViewer } from '../src/components/ZoomableImageViewer';
 import { RetailerLogo } from '../src/components/RetailerLogo';
 import { Colors, Spacing, Radii } from '../src/constants/theme';
 import { formatRetailerName } from '../src/constants/retailers';
@@ -26,6 +27,7 @@ import {
 } from '../src/services/api';
 import { useLooksStore } from '../src/services/looksStore';
 import { openAffiliateProductUrl } from '../src/services/affiliate';
+import { shareImageWithText } from 'fitme-extraction';
 
 const FALLBACK_IMG =
   'https://images.unsplash.com/photo-1469334031218-e382a71b716b?auto=format&fit=crop&w=900&q=80';
@@ -95,15 +97,8 @@ export default function Result() {
   const [view, setView]         = useState<'original' | 'you'>('you');
   const [fullscreen, setFull]   = useState(false);
   const [fsView, setFsView]     = useState<'you' | 'original'>('you');
-  const [youZoomScale, setYouZoomScale] = useState(1);
-  const [originalZoomScale, setOriginalZoomScale] = useState(1);
-
   const horizontalPagerRef = React.useRef<ScrollView>(null);
-  const youScrollRef = React.useRef<ScrollView>(null);
-  const originalScrollRef = React.useRef<ScrollView>(null);
-  const lastTapRef = React.useRef<number>(0);
-
-  const isZoomed = (fsView === 'you' ? youZoomScale : originalZoomScale) > 1.05;
+  const [isZoomed, setIsZoomed] = useState(false);
 
   const [isSaving, setIsSaving]       = useState(false);
   const [isSharing, setIsSharing]     = useState(false);
@@ -408,29 +403,34 @@ export default function Result() {
     }
   }, [shopUrl]);
 
+  const isSavingRef = React.useRef(false);
+
   // ── Save action ───────────────────────────────────────────────────────────
   const handleToggleSave = useCallback(async () => {
-    if (!activeJobId || isSaving) return;
-    setIsSaving(true);
-    const prevSaved = isSaved;
-    const nextSaved = !prevSaved;
-    setIsSaved(nextSaved);
+    if (!activeJobId) return;
+
+    // Instant optimistic toggle for immediate visual response on every tap
+    setIsSaved((prev) => !prev);
+
     try {
-      await tryOnApi.toggleSave(String(activeJobId));
-      useLooksStore.getState().fetchLooks(true).catch(() => {});
+      await useLooksStore.getState().toggleSave(String(activeJobId));
     } catch (err) {
       console.warn('Could not toggle save on look:', err);
-      setIsSaved(prevSaved);
-      Alert.alert('Error', 'Could not update saved look.');
-    } finally {
-      setIsSaving(false);
     }
-  }, [activeJobId, isSaved, isSaving]);
+  }, [activeJobId]);
+
+  const isSharingRef = React.useRef(false);
 
   // ── Share action ──────────────────────────────────────────────────────────
   const handleShare = useCallback(async () => {
-    if (isSharing) return;
-    setIsSharing(true);
+    if (Platform.OS === 'android') {
+      if (isSharingRef.current) return;
+      isSharingRef.current = true;
+    } else {
+      if (isSharing) return;
+      setIsSharing(true);
+    }
+
     try {
       const localUri = isLocal(RESULT_IMG) ? RESULT_IMG : await cacheRemoteImage(RESULT_IMG);
       const canShare = await Sharing.isAvailableAsync();
@@ -438,21 +438,39 @@ export default function Result() {
         Alert.alert('Sharing unavailable', 'Your device does not support sharing.');
         return;
       }
-      await Sharing.shareAsync(localUri, { mimeType: 'image/jpeg', dialogTitle: 'Share your look' });
+
+      if (Platform.OS === 'android') {
+        const shareTitle = productTitle && productTitle !== 'Virtual Look' ? `👗 ${productTitle}` : null;
+        const sharePrice = productPrice ? `${productPrice}` : null;
+        const productLine = [shareTitle, sharePrice].filter(Boolean).join('\n');
+
+        const shareMessage = [
+          '✨ Tried this look on FitMe!',
+          productLine ? `\n${productLine}` : '',
+          '\nSee how this outfit looks on me with AI Try-On.\n👗 Discover your next look with FitMe.',
+        ].filter(Boolean).join('\n').trim();
+
+        await shareImageWithText(localUri, shareMessage, 'Share your look');
+      } else {
+        await Sharing.shareAsync(localUri, { mimeType: 'image/jpeg', dialogTitle: 'Share your look' });
+      }
     } catch (err: any) {
       if (!String(err?.message).includes('User did not share') && !String(err?.message).includes('dismissed') && !String(err?.message).includes('cancel')) {
         Alert.alert('Error', 'Could not share the image. Please try again.');
       }
     } finally {
-      setIsSharing(false);
+      if (Platform.OS === 'android') {
+        isSharingRef.current = false;
+      } else {
+        setIsSharing(false);
+      }
     }
-  }, [RESULT_IMG, isSharing]);
+  }, [RESULT_IMG, isSharing, productTitle, productPrice]);
 
   // ── Fullscreen image viewer handlers (Page 0 = ORIGINAL, Page 1 = ON YOU)
   const openFullscreen = useCallback((initialView: 'original' | 'you') => {
     setFsView(initialView);
-    setYouZoomScale(1);
-    setOriginalZoomScale(1);
+    setIsZoomed(false);
     setFull(true);
     setTimeout(() => {
       horizontalPagerRef.current?.scrollTo({
@@ -466,58 +484,17 @@ export default function Result() {
     const pageIndex = Math.round(e.nativeEvent.contentOffset.x / windowWidth);
     const newView = pageIndex === 0 ? 'original' : 'you';
     setFsView(newView);
-    if (newView === 'you') {
-      originalScrollRef.current?.scrollResponderZoomTo({ x: 0, y: 0, width: windowWidth, height: windowHeight, animated: false });
-      setOriginalZoomScale(1);
-    } else {
-      youScrollRef.current?.scrollResponderZoomTo({ x: 0, y: 0, width: windowWidth, height: windowHeight, animated: false });
-      setYouZoomScale(1);
-    }
-  }, [windowWidth, windowHeight]);
+    setIsZoomed(false);
+  }, [windowWidth]);
 
   const handleDotPress = useCallback((targetView: 'original' | 'you') => {
     setFsView(targetView);
+    setIsZoomed(false);
     horizontalPagerRef.current?.scrollTo({
       x: targetView === 'original' ? 0 : windowWidth,
       animated: true,
     });
   }, [windowWidth]);
-
-  const handleDoubleTapPage = (page: 'you' | 'original', e: any) => {
-    const now = Date.now();
-    const DOUBLE_PRESS_DELAY = 300;
-    if (lastTapRef.current && now - lastTapRef.current < DOUBLE_PRESS_DELAY) {
-      const currentScale = page === 'you' ? youZoomScale : originalZoomScale;
-      const activeRef = page === 'you' ? youScrollRef : originalScrollRef;
-      const setScale = page === 'you' ? setYouZoomScale : setOriginalZoomScale;
-
-      if (currentScale > 1.05) {
-        activeRef.current?.scrollResponderZoomTo({
-          x: 0,
-          y: 0,
-          width: windowWidth,
-          height: windowHeight,
-          animated: true,
-        });
-        setScale(1);
-      } else {
-        const { locationX, locationY } = e.nativeEvent;
-        const targetW = windowWidth / 2.5;
-        const targetH = windowHeight / 2.5;
-        activeRef.current?.scrollResponderZoomTo({
-          x: Math.max(0, locationX - targetW / 2),
-          y: Math.max(0, locationY - targetH / 2),
-          width: targetW,
-          height: targetH,
-          animated: true,
-        });
-        setScale(2.5);
-      }
-      lastTapRef.current = 0;
-    } else {
-      lastTapRef.current = now;
-    }
-  };
 
   // ── render ────────────────────────────────────────────────────────────────
   return (
@@ -582,12 +559,18 @@ export default function Result() {
             style={styles.saveHeartBtn}
             onPress={handleToggleSave}
             activeOpacity={0.7}
-            disabled={isSaving}
+            disabled={Platform.OS === 'android' ? false : isSaving}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             accessibilityLabel={isSaved ? 'Unsave look' : 'Save look'}
             accessibilityRole="button"
           >
-            {isSaving ? (
+            {Platform.OS === 'android' ? (
+              <Ionicons
+                name={isSaved ? 'heart' : 'heart-outline'}
+                size={22}
+                color={isSaved ? Colors.destructive : Colors.foreground}
+              />
+            ) : isSaving ? (
               <ActivityIndicator size="small" color={isSaved ? Colors.destructive : Colors.accent} />
             ) : (
               <Ionicons
@@ -799,8 +782,7 @@ export default function Result() {
         statusBarTranslucent={true}
         onRequestClose={() => {
           setFull(false);
-          setYouZoomScale(1);
-          setOriginalZoomScale(1);
+          setIsZoomed(false);
         }}
       >
         <View style={styles.fsWrap}>
@@ -810,8 +792,7 @@ export default function Result() {
               style={styles.fsClose}
               onPress={() => {
                 setFull(false);
-                setYouZoomScale(1);
-                setOriginalZoomScale(1);
+                setIsZoomed(false);
               }}
               activeOpacity={0.7}
               accessibilityLabel="Close fullscreen"
@@ -837,46 +818,12 @@ export default function Result() {
           >
             {/* Page 0: ORIGINAL */}
             <View style={[styles.fsPageContainer, { width: windowWidth }]}>
-              <ScrollView
-                ref={originalScrollRef}
-                style={styles.fsScrollView}
-                contentContainerStyle={styles.fsScrollContent}
-                maximumZoomScale={4}
-                minimumZoomScale={1}
-                showsHorizontalScrollIndicator={false}
-                showsVerticalScrollIndicator={false}
-                centerContent={true}
-              >
-                <TouchableOpacity
-                  activeOpacity={1}
-                  onPress={(e) => handleDoubleTapPage('original', e)}
-                  style={styles.fsTouchWrap}
-                >
-                  <Image source={{ uri: PRODUCT_IMG }} style={[styles.fsImg, { width: windowWidth }]} resizeMode="contain" />
-                </TouchableOpacity>
-              </ScrollView>
+              <ZoomableImageViewer uri={PRODUCT_IMG} onZoomChange={setIsZoomed} />
             </View>
 
             {/* Page 1: ON YOU */}
             <View style={[styles.fsPageContainer, { width: windowWidth }]}>
-              <ScrollView
-                ref={youScrollRef}
-                style={styles.fsScrollView}
-                contentContainerStyle={styles.fsScrollContent}
-                maximumZoomScale={4}
-                minimumZoomScale={1}
-                showsHorizontalScrollIndicator={false}
-                showsVerticalScrollIndicator={false}
-                centerContent={true}
-              >
-                <TouchableOpacity
-                  activeOpacity={1}
-                  onPress={(e) => handleDoubleTapPage('you', e)}
-                  style={styles.fsTouchWrap}
-                >
-                  <Image source={{ uri: RESULT_IMG }} style={[styles.fsImg, { width: windowWidth }]} resizeMode="contain" />
-                </TouchableOpacity>
-              </ScrollView>
+              <ZoomableImageViewer uri={RESULT_IMG} onZoomChange={setIsZoomed} />
             </View>
           </ScrollView>
 

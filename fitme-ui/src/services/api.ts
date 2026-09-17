@@ -13,30 +13,86 @@
  *   EXPO_PUBLIC_API_URL=http://localhost:8000   (iOS simulator / web)
  *   EXPO_PUBLIC_API_URL=http://10.0.2.2:8000    (Android emulator -> host machine)
  */
+import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
 
-// Determine API base URL, handling Android emulator vs real device networking
-import { Platform } from 'react-native';
+// Determine API base URL, strictly separating DEVELOPMENT (local backend) from PRODUCTION (Railway)
+import { NativeModules, Platform } from 'react-native';
 
-const envUrl = process.env.EXPO_PUBLIC_API_URL ?? '';
+const PRODUCTION_API_URL = 'https://fitmeapptesting-1-production.up.railway.app';
+const LOCAL_IOS_URL = 'http://127.0.0.1:8000';
+const LOCAL_ANDROID_URL = 'http://10.0.2.2:8000';
 
-function resolveBaseUrl(): string {
-  if (envUrl) {
-    // If it's already a real LAN/WAN IP (not loopback), use it directly on all platforms
-    if (!envUrl.includes('127.0.0.1') && !envUrl.includes('localhost')) {
-      return envUrl;
+function getMetroHost(): string | null {
+  try {
+    // 1. Native React Native Bridge scriptURL (Works in Xcode, Bare RN CLI, Expo Dev Client & Physical Devices)
+    const scriptURL = NativeModules.SourceCode?.scriptURL;
+    if (scriptURL && typeof scriptURL === 'string') {
+      const match = scriptURL.match(/^https?:\/\/([^/:]+)/);
+      if (match && match[1]) {
+        const ip = match[1];
+        if (ip && ip !== 'localhost' && ip !== '127.0.0.1' && ip !== '0.0.0.0') {
+          return ip;
+        }
+      }
     }
-    // On Android, rewrite loopback to emulator host alias
-    if (Platform.OS === 'android') {
-      return envUrl.replace('127.0.0.1', '10.0.2.2').replace('localhost', '10.0.2.2');
+
+    // 2. Expo Constants hostUri (Works in Expo Go)
+    const hostUri =
+      Constants.expoConfig?.hostUri ||
+      (Constants as any).manifest2?.extra?.expoGo?.developer?.tool ||
+      (Constants as any).manifest?.debuggerHost ||
+      Constants.linkingUri;
+    if (hostUri && typeof hostUri === 'string') {
+      const clean = hostUri.replace(/^[a-z]+:\/\//, '');
+      const ip = clean.split(':')[0];
+      if (ip && ip !== 'localhost' && ip !== '127.0.0.1' && ip !== '0.0.0.0') {
+        return ip;
+      }
     }
-    return envUrl.replace('localhost', '127.0.0.1');
-  }
-  // Fallback defaults
-  return Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://127.0.0.1:8000';
+  } catch (_) {}
+  return null;
 }
 
-export const BASE_URL = resolveBaseUrl();
+export function getBaseUrl(): string {
+  // 1. PRODUCTION DETERMINISTIC ROUTING (__DEV__ === false)
+  // In release builds, always route directly to Railway production.
+  const isDev = typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production';
+  if (!isDev) {
+    return PRODUCTION_API_URL;
+  }
+
+  // 2. DEVELOPMENT EXPLICIT LAN OVERRIDE (.env EXPO_PUBLIC_DEV_API_URL)
+  const devOverride = process.env.EXPO_PUBLIC_DEV_API_URL?.trim();
+  if (devOverride) {
+    if (Platform.OS === 'android') {
+      return devOverride.replace('127.0.0.1', '10.0.2.2').replace('localhost', '10.0.2.2');
+    }
+    return devOverride;
+  }
+
+  // 3. Auto-detect Metro bundler LAN IP (works seamlessly for Physical iOS & Android devices)
+  const metroHost = getMetroHost();
+  if (metroHost) {
+    const autoLanUrl = `http://${metroHost}:8000`;
+    return autoLanUrl;
+  }
+
+  // 4. Fallback EXPO_PUBLIC_API_URL if configured
+  const envApiUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
+  if (envApiUrl && envApiUrl.startsWith('http') && !envApiUrl.includes('127.0.0.1') && !envApiUrl.includes('localhost')) {
+    if (Platform.OS === 'android') {
+      return envApiUrl.replace('127.0.0.1', '10.0.2.2').replace('localhost', '10.0.2.2');
+    }
+    return envApiUrl;
+  }
+
+  // 5. Default development endpoints fallback (iOS Simulator / Android Emulator)
+  const devUrl = Platform.OS === 'android' ? LOCAL_ANDROID_URL : LOCAL_IOS_URL;
+  return devUrl;
+}
+
+export const BASE_URL = getBaseUrl();
 
 
 const ACCESS_TOKEN_KEY = 'fitme_access_token';
@@ -171,8 +227,9 @@ export class ApiError extends Error {
 export type RequestOptions = RequestInit & { timeoutMs?: number; silentTimeout?: boolean };
 
 export async function request<T>(endpoint: string, options: RequestOptions = {}, retry = true): Promise<T> {
+  const currentBaseUrl = getBaseUrl();
   console.log('REQUEST FUNCTION CALLED');
-  console.log('BASE_URL:', BASE_URL);
+  console.log('BASE_URL:', currentBaseUrl);
   const isForm = options.body instanceof FormData;
   console.log('Endpoint:', endpoint);
   console.log('Method:', options.method ?? 'GET');
@@ -184,7 +241,7 @@ export async function request<T>(endpoint: string, options: RequestOptions = {},
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    console.log('REQUEST URL:', `${BASE_URL}${endpoint}`);
+    console.log('REQUEST URL:', `${currentBaseUrl}${endpoint}`);
     console.log('Sending request...');
     const token = await getValidAccessToken();
     const finalHeaders = {
@@ -193,7 +250,7 @@ export async function request<T>(endpoint: string, options: RequestOptions = {},
       ...options.headers,
     };
     console.log('Final headers being sent:', finalHeaders);
-    response = await fetch(`${BASE_URL}${endpoint}`, {
+    response = await fetch(`${currentBaseUrl}${endpoint}`, {
       ...options,
       headers: finalHeaders,
       signal: controller.signal,
@@ -201,7 +258,7 @@ export async function request<T>(endpoint: string, options: RequestOptions = {},
   } catch (err: any) {
     console.log("============= FETCH ERROR =============");
     console.log("Endpoint:", endpoint);
-    console.log("URL Called:", `${BASE_URL}${endpoint}`);
+    console.log("URL Called:", `${currentBaseUrl}${endpoint}`);
     console.log("Error Name:", err?.name);
     console.log("Error Message:", err?.message);
     console.log("Error Cause:", err?.cause);
@@ -378,10 +435,30 @@ export const productApi = {
   /** Upload an uncropped, original garment image file to Supabase Storage and register the garment */
   uploadGarment: async (imageUri: string, metadata?: { title?: string; brand?: string; price?: string }): Promise<ProductResponse> => {
     const formData = new FormData();
-    const filename = imageUri.split('/').pop() || 'garment.jpg';
-    const match = /\.(\w+)$/.exec(filename);
-    const type = match ? `image/${match[1].toLowerCase()}` : 'image/jpeg';
-    formData.append('image', { uri: imageUri, name: filename, type } as any);
+    let formattedUri = imageUri;
+
+    if (Platform.OS === 'android') {
+      const cleanUri = imageUri ? imageUri.split('?')[0] : '';
+      formattedUri = cleanUri;
+      if (
+        formattedUri &&
+        !formattedUri.startsWith('file://') &&
+        !formattedUri.startsWith('content://') &&
+        !formattedUri.startsWith('http://') &&
+        !formattedUri.startsWith('https://')
+      ) {
+        formattedUri = `file://${formattedUri}`;
+      }
+    }
+
+    const cleanPath = imageUri ? imageUri.split('?')[0] : '';
+    const rawName = cleanPath.split('/').pop() || 'garment.jpg';
+    const baseName = rawName.split('.')[0] || 'garment';
+    // Always format garment filename as .jpg and image/jpeg MIME type for 100% Supabase Storage & AI pipeline compatibility
+    const filename = `${baseName}_${Date.now()}.jpg`;
+    const type = 'image/jpeg';
+
+    formData.append('image', { uri: formattedUri, name: filename, type } as any);
     if (metadata?.title) formData.append('title', metadata.title);
     if (metadata?.brand) formData.append('brand', metadata.brand);
     if (metadata?.price) formData.append('price', metadata.price);

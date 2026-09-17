@@ -14,6 +14,7 @@ export default function FindProductUpload() {
   const router = useRouter();
   const setProductImageUri = useSession((s) => s.setProductImageUri);
   const setProductImageBase64 = useSession((s) => s.setProductImageBase64);
+  const setProductId = useSession((s) => s.setProductId);
   
   const [garmentImage, setGarmentImage] = useState<string | null>(null);
   const [userBrand, setUserBrand] = useState<string>('');
@@ -46,6 +47,7 @@ export default function FindProductUpload() {
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
         setGarmentImage(asset.uri);
+        setProductId('');
         setProductImageUri(asset.uri);
         setProductImageBase64(asset.base64 || null);
         navigateToSearching(asset.uri);
@@ -72,6 +74,7 @@ export default function FindProductUpload() {
       if (!result.canceled && result.assets[0]) {
         const asset = result.assets[0];
         setGarmentImage(asset.uri);
+        setProductId('');
         setProductImageUri(asset.uri);
         setProductImageBase64(asset.base64 || null);
         navigateToSearching(asset.uri);

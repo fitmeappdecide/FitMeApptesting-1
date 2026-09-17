@@ -12,6 +12,7 @@ type SessionState = {
   productImageBase64: string | null;
   extractedProduct: NormalizedProduct | null;
   productId: string | null;
+  garmentRegistrationPromise: Promise<{ product_id: string }> | null;
   scanId: string | null;
   tryOnJobId: string | null;
   resultImageUrls: string[];
@@ -24,6 +25,7 @@ type SessionState = {
   setProductImageBase64: (base64: string | null) => void;
   setExtractedProduct: (product: NormalizedProduct | null) => void;
   setProductId: (id: string) => void;
+  setGarmentRegistrationPromise: (promise: Promise<{ product_id: string }> | null) => void;
   setScanId: (id: string | null) => void;
   setTryOnJobId: (id: string | null) => void;
   setResultImageUrls: (urls: string[]) => void;
@@ -39,6 +41,7 @@ export const useSession = create<SessionState>((set) => ({
   productImageBase64: null,
   extractedProduct: null,
   productId: null,
+  garmentRegistrationPromise: null,
   scanId: null,
   tryOnJobId: null,
   resultImageUrls: [],
@@ -51,6 +54,7 @@ export const useSession = create<SessionState>((set) => ({
   setProductImageBase64: (productImageBase64) => set({ productImageBase64 }),
   setExtractedProduct: (extractedProduct) => set({ extractedProduct }),
   setProductId: (productId) => set({ productId }),
+  setGarmentRegistrationPromise: (garmentRegistrationPromise) => set({ garmentRegistrationPromise }),
   setScanId: (scanId) => set({ scanId }),
   setTryOnJobId: (tryOnJobId) => set({ tryOnJobId }),
   setResultImageUrls: (resultImageUrls) => set({ resultImageUrls }),
@@ -63,6 +67,7 @@ export const useSession = create<SessionState>((set) => ({
       productImageUri: null,
       extractedProduct: null,
       productId: null,
+      garmentRegistrationPromise: null,
       scanId: null,
       tryOnJobId: null,
       resultImageUrls: [],

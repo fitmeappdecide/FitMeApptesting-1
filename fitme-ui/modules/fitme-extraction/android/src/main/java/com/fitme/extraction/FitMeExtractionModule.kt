@@ -45,5 +45,37 @@ class FitMeExtractionModule : Module() {
         }
       })
     }
+
+    AsyncFunction("shareImageWithText") { imagePath: String, message: String, dialogTitle: String, promise: Promise ->
+      val activity = appContext.currentActivity ?: throw Exception("Activity is null")
+      try {
+        val cleanPath = if (imagePath.startsWith("file://")) imagePath.substring(7) else imagePath
+        val file = java.io.File(cleanPath)
+
+        if (!file.exists() || !file.isFile || !file.canRead()) {
+          promise.reject("SHARE_ERROR", "Image file does not exist or is not readable: $cleanPath", null)
+          return@AsyncFunction
+        }
+
+        val authority = "${activity.packageName}.FileSystemFileProvider"
+        val contentUri: android.net.Uri = androidx.core.content.FileProvider.getUriForFile(activity, authority, file)
+
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+          type = "image/*"
+          putExtra(android.content.Intent.EXTRA_STREAM, contentUri)
+          putExtra(android.content.Intent.EXTRA_TEXT, message)
+          addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+
+        val chooser = android.content.Intent.createChooser(intent, dialogTitle).apply {
+          addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+
+        activity.startActivity(chooser)
+        promise.resolve(true)
+      } catch (e: Exception) {
+        promise.reject("SHARE_ERROR", e.message ?: "Failed to share image via FileProvider", e)
+      }
+    }
   }
 }

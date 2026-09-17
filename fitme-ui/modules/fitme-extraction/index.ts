@@ -1,2 +1,2 @@
-export { extractProduct, addExtractionProgressListener } from './src/FitMeExtractionModule';
+export { extractProduct, addExtractionProgressListener, shareImageWithText } from './src/FitMeExtractionModule';
 export type { Product } from './src/FitMeExtractionModule';

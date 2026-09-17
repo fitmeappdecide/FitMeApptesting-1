@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export type UserPhoto = {
   id: string;
@@ -7,36 +9,66 @@ export type UserPhoto = {
   name?: string;
 };
 
+export type UserProfileInfo = {
+  full_name?: string | null;
+  email?: string | null;
+  try_on_count?: number;
+  saved_count?: number;
+  avatar_uri?: string | null;
+};
+
 type UserState = {
   isPremium: boolean;
   photos: UserPhoto[];
+  profile: UserProfileInfo | null;
   
   setPremium: (isPremium: boolean) => void;
+  setProfile: (profile: Partial<UserProfileInfo>) => void;
   addPhoto: (photo: UserPhoto) => void;
   deletePhoto: (id: string) => void;
   renamePhoto: (id: string, name: string) => void;
+  clearProfile: () => void;
 };
 
-const initialPhotos: UserPhoto[] = [
-  { id: '1', uri: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=600&h=800&q=80', age: '2 days ago', name: 'Look 1' },
-  { id: '2', uri: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=600&h=800&q=80', age: '1 week ago', name: 'Look 2' },
-];
+export const useUserStore = create<UserState>()(
+  persist(
+    (set) => ({
+      isPremium: false,
+      photos: [],
+      profile: null,
 
-export const useUserStore = create<UserState>((set) => ({
-  isPremium: false, // Default to Free tier for testing
-  photos: initialPhotos,
+      setPremium: (isPremium) => set({ isPremium }),
 
-  setPremium: (isPremium) => set({ isPremium }),
-  
-  addPhoto: (photo) => set((state) => ({ 
-    photos: [photo, ...state.photos] 
-  })),
-  
-  deletePhoto: (id) => set((state) => ({ 
-    photos: state.photos.filter((p) => p.id !== id) 
-  })),
-  
-  renamePhoto: (id, name) => set((state) => ({
-    photos: state.photos.map((p) => (p.id === id ? { ...p, name } : p))
-  })),
-}));
+      setProfile: (newProfile) =>
+        set((state) => ({
+          profile: { ...(state.profile || {}), ...newProfile },
+        })),
+
+      addPhoto: (photo) =>
+        set((state) => ({
+          photos: [photo, ...state.photos.filter((p) => p.id !== photo.id)],
+        })),
+
+      deletePhoto: (id) =>
+        set((state) => ({
+          photos: state.photos.filter((p) => p.id !== id),
+        })),
+
+      renamePhoto: (id, name) =>
+        set((state) => ({
+          photos: state.photos.map((p) => (p.id === id ? { ...p, name } : p)),
+        })),
+
+      clearProfile: () =>
+        set({
+          profile: null,
+          isPremium: false,
+          photos: [],
+        }),
+    }),
+    {
+      name: 'fitme_user_phone_cache_v2',
+      storage: createJSONStorage(() => AsyncStorage),
+    }
+  )
+);

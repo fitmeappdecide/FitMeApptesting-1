@@ -14,9 +14,11 @@ from app.services.storage_service import (
     cdn_url_for_private_ref,
     create_signed_photo_url,
     create_thumbnail,
+    download_image_from_storage,
     download_user_photo,
     optimize_tryon_result,
     retrieve_image_bytes_from_encrypted_ref,
+    sign_if_private,
     upload_image_to_storage,
 )
 from app.services.tryon.provider import TryOnProvider, TryOnResult
@@ -115,6 +117,10 @@ class VertexProvider(TryOnProvider):
         with TelemetryTimer("VertexProvider.generate_tryon()") as timer:
             start = time.time()
 
+            # Fast reject for unsupported footwear category
+            if garment_type == "shoes":
+                raise RuntimeError("Footwear try-on (shoes, slippers, heels, boots) is currently unsupported by Google Vertex AI virtual-try-on-001 model.")
+
             # Ensure client is initialized
             if self.client is None:
                 self.__init__()
@@ -125,10 +131,17 @@ class VertexProvider(TryOnProvider):
             user_error = None
             garment_error = None
 
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+            }
+            async with httpx.AsyncClient(headers=headers, timeout=30.0, follow_redirects=True) as client:
                 try:
                     if not user_image_url or not isinstance(user_image_url, str):
                         user_error = "User image URL is empty"
+                    elif os.path.exists(user_image_url):
+                        with open(user_image_url, "rb") as f:
+                            user_bytes = f.read()
                     elif user_image_url.startswith("http://") or user_image_url.startswith("https://"):
                         resp = await client.get(user_image_url)
                         resp.raise_for_status()
@@ -137,9 +150,6 @@ class VertexProvider(TryOnProvider):
                         import base64
                         header, data = user_image_url.split(",", 1)
                         user_bytes = base64.b64decode(data)
-                    elif os.path.exists(user_image_url):
-                        with open(user_image_url, "rb") as f:
-                            user_bytes = f.read()
                     elif user_image_url.startswith("scans/") or user_image_url.startswith("user-photos/") or user_image_url.startswith("user_photos/"):
                         user_bytes = download_user_photo(user_image_url)
                     else:
@@ -153,10 +163,57 @@ class VertexProvider(TryOnProvider):
                 try:
                     if not garment_image_url or not isinstance(garment_image_url, str):
                         garment_error = "Garment image URL is empty"
+                    elif os.path.exists(garment_image_url):
+                        with open(garment_image_url, "rb") as f:
+                            garment_bytes = f.read()
+                    elif (
+                        garment_image_url.startswith("garments/")
+                        or garment_image_url.startswith("scans/")
+                        or garment_image_url.startswith("user_photos/")
+                        or garment_image_url.startswith("tryon_results/")
+                    ):
+                        garment_bytes = download_image_from_storage(garment_image_url)
+                    elif (
+                        settings.supabase_url
+                        and settings.supabase_url in garment_image_url
+                        and ("/storage/v1/object/" in garment_image_url or f"/{settings.supabase_storage_bucket}/" in garment_image_url)
+                    ):
+                        # Extract the storage object key directly from the Supabase URL
+                        bucket_name = settings.supabase_storage_bucket
+                        clean_path = garment_image_url.split("?")[0]
+                        for prefix in (f"/storage/v1/object/public/{bucket_name}/", f"/storage/v1/object/sign/{bucket_name}/", f"/{bucket_name}/"):
+                            if prefix in clean_path:
+                                clean_path = clean_path.split(prefix, 1)[1]
+                                break
+                        try:
+                            garment_bytes = download_image_from_storage(clean_path)
+                        except Exception:
+                            signed = sign_if_private(garment_image_url)
+                            target_url = signed if (signed and signed != garment_image_url) else garment_image_url
+                            resp = await client.get(target_url)
+                            resp.raise_for_status()
+                            garment_bytes = resp.content
                     elif garment_image_url.startswith("http://") or garment_image_url.startswith("https://"):
-                        resp = await client.get(garment_image_url)
-                        resp.raise_for_status()
-                        garment_bytes = resp.content
+                        try:
+                            resp = await client.get(garment_image_url)
+                            resp.raise_for_status()
+                            garment_bytes = resp.content
+                        except Exception as http_err:
+                            # If HTTP GET failed (e.g. 400 Bad Request on a Supabase URL or expired token), try signing or direct storage
+                            signed = sign_if_private(garment_image_url)
+                            if signed and signed != garment_image_url:
+                                resp = await client.get(signed)
+                                resp.raise_for_status()
+                                garment_bytes = resp.content
+                            elif settings.supabase_storage_bucket and f"/{settings.supabase_storage_bucket}/" in garment_image_url:
+                                clean_path = garment_image_url.split(f"/{settings.supabase_storage_bucket}/", 1)[1].split("?")[0]
+                                garment_bytes = download_image_from_storage(clean_path)
+                            else:
+                                raise http_err
+                    elif garment_image_url.startswith("data:"):
+                        import base64
+                        header, data = garment_image_url.split(",", 1)
+                        garment_bytes = base64.b64decode(data)
                     elif garment_image_url.startswith("/"):
                         full_url = f"{settings.supabase_url}{garment_image_url}" if settings.supabase_url else ""
                         if full_url:
@@ -176,6 +233,8 @@ class VertexProvider(TryOnProvider):
                 raise RuntimeError(f"Garment image could not be loaded: {garment_error or 'garment data is empty'}")
             if self.client is None:
                 raise RuntimeError("Google Vertex AI client is not available. Please verify GCP_VERTEX_KEY_JSON.")
+            if garment_type == "shoes":
+                raise RuntimeError("Footwear try-on (shoes, slippers, heels, boots) is currently unsupported by Google Vertex AI virtual-try-on-001 model.")
 
             person_path = None
             garment_path = None

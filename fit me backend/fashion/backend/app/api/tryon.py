@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 import re
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
@@ -44,15 +44,41 @@ router = APIRouter(prefix="/api/v1/tryon", tags=["tryon"])
 # Mapping from Garment.garment_type (database values) to the provider's
 # Literal type.  Values not present fall back to None (provider decides).
 _DB_TYPE_TO_PROVIDER: dict[str, Literal["top", "bottom", "dress", "saree", "full_body", "shoes"]] = {
-    "tshirt":  "top",
-    "shirt":   "top",
-    "kurta":   "top",
-    "hoodie":  "top",
-    "jacket":  "top",
-    "pants":   "bottom",
-    "saree":   "saree",
-    "lehenga": "full_body",
-    "dress":   "dress",
+    "tshirt":       "top",
+    "shirt":        "top",
+    "kurta":        "top",
+    "hoodie":       "top",
+    "jacket":       "top",
+    "pants":        "bottom",
+    "saree":        "saree",
+    "lehenga":      "full_body",
+    "dress":        "dress",
+    "shoes":        "shoes",
+    "shoe":         "shoes",
+    "slipper":      "shoes",
+    "slippers":     "shoes",
+    "heel":         "shoes",
+    "heels":        "shoes",
+    "mule":         "shoes",
+    "mules":        "shoes",
+    "sandal":       "shoes",
+    "sandals":      "shoes",
+    "flats":        "shoes",
+    "flat":         "shoes",
+    "boot":         "shoes",
+    "boots":        "shoes",
+    "sneaker":      "shoes",
+    "sneakers":     "shoes",
+    "pump":         "shoes",
+    "pumps":        "shoes",
+    "wedge":        "shoes",
+    "wedges":       "shoes",
+    "clog":         "shoes",
+    "clogs":        "shoes",
+    "loafer":       "shoes",
+    "loafers":      "shoes",
+    "footwear":     "shoes",
+    "footwear_set": "shoes",
 }
 
 # Keyword fallback: checked against lower-cased product_name when the DB
@@ -77,11 +103,41 @@ _KEYWORD_MAP: list[tuple[str, Literal["top", "bottom", "dress", "saree", "full_b
     ("dress",    "dress"),
     ("gown",     "full_body"),
     ("shoe",     "shoes"),
+    ("shoes",    "shoes"),
+    ("slipper",  "shoes"),
+    ("slippers", "shoes"),
     ("sneaker",  "shoes"),
+    ("sneakers", "shoes"),
     ("boot",     "shoes"),
+    ("boots",    "shoes"),
     ("sandal",   "shoes"),
+    ("sandals",  "shoes"),
     ("heel",     "shoes"),
+    ("heels",    "shoes"),
+    ("mule",     "shoes"),
+    ("mules",    "shoes"),
+    ("flats",    "shoes"),
+    ("flat",     "shoes"),
+    ("pump",     "shoes"),
+    ("pumps",    "shoes"),
+    ("wedge",    "shoes"),
+    ("wedges",   "shoes"),
+    ("clog",     "shoes"),
+    ("clogs",    "shoes"),
+    ("loafer",   "shoes"),
+    ("loafers",  "shoes"),
+    ("footwear", "shoes"),
 ]
+
+
+def _is_valid_uuid(val: Any) -> bool:
+    if not val:
+        return False
+    try:
+        uuid.UUID(str(val))
+        return True
+    except (ValueError, TypeError, AttributeError):
+        return False
 
 
 def _detect_garment_type(
@@ -123,7 +179,37 @@ async def start_tryon(
         # ------------------------------------------------------------------
         # 1. Load and validate photo source and garment
         # ------------------------------------------------------------------
-        garment = await db.get(Garment, payload.garment_id)
+        garment = None
+        garment_id_str = str(payload.garment_id) if payload.garment_id else ""
+        if _is_valid_uuid(garment_id_str):
+            try:
+                garment = await db.get(Garment, payload.garment_id)
+            except Exception:
+                garment = None
+
+        if garment is None and garment_id_str:
+            # Candidate auto-bridge: try finding matching candidate in recent Product Intelligence scans
+            try:
+                from app.models.product_intelligence import PIScan
+                from app.services.candidate_bridge import convert_candidate_to_garment
+
+                stmt = select(PIScan).order_by(PIScan.created_at.desc()).limit(20)
+                res = await db.execute(stmt)
+                scans = res.scalars().all()
+                found_cand = None
+                for sc in scans:
+                    if sc.candidates and isinstance(sc.candidates, list):
+                        for cand in sc.candidates:
+                            if isinstance(cand, dict) and str(cand.get("id")) == garment_id_str:
+                                found_cand = cand
+                                break
+                    if found_cand:
+                        break
+                if found_cand:
+                    garment = await convert_candidate_to_garment(found_cand, db)
+            except Exception as b_err:
+                print(f"Notice: Candidate auto-bridge attempt failed ({b_err})")
+
         if garment is None:
             raise api_error(404, "GARMENT_NOT_FOUND", "Garment was not found.", "गारमेंट नहीं मिला।")
 
@@ -259,6 +345,14 @@ async def start_tryon(
             else:
                 garment_image_url: str = first_garment_url
                 garment_type = garment.garment_type if (garment.garment_type and garment.garment_type != "unknown") else _detect_garment_type(garment)
+
+                if garment_type == "shoes":
+                    raise api_error(
+                        422,
+                        "FOOTWEAR_TRYON_UNSUPPORTED",
+                        "Virtual try-on is currently available for apparel (tops, bottoms, dresses, ethnic wear). Footwear try-on is not supported by Google Vertex AI.",
+                        "वर्चुअल ट्राई-ऑन वर्तमान में केवल कपड़ों (टॉप्स, बॉटम्स, ड्रेस) के लिए उपलब्ध है। जूते/चप्पल ट्राई-ऑन समर्थित नहीं है।",
+                    )
 
                 provider = get_tryon_provider()
                 result = await provider.generate_tryon(
@@ -646,6 +740,16 @@ async def get_tryon_detail(
         elif isinstance(first_img, str):
             garment_image_url = first_img
 
+    signed_garment_image_url = storage_service.sign_if_private(garment_image_url) if garment_image_url else None
+    signed_garment_images = []
+    for gimg in garment_images:
+        if isinstance(gimg, dict) and "url" in gimg and gimg["url"]:
+            signed_garment_images.append({**gimg, "url": storage_service.sign_if_private(gimg["url"])})
+        elif isinstance(gimg, str):
+            signed_garment_images.append(storage_service.sign_if_private(gimg))
+        else:
+            signed_garment_images.append(gimg)
+
     # Resolve product URL
     product_url = garment.product_url or garment.scraped_from_url if garment else None
 
@@ -693,8 +797,8 @@ async def get_tryon_detail(
         platform=platform,
         product_url=product_url,
         affiliate_url=None,
-        garment_image_url=garment_image_url,
-        garment_images=garment_images,
+        garment_image_url=signed_garment_image_url,
+        garment_images=signed_garment_images,
         garment_type=garment.garment_type if garment else None,
         price=price_val,
         size_recommendation=size,

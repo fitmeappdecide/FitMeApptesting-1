@@ -4,6 +4,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.core import database as core_db
+from tests.conftest import TestAsyncSessionLocal
 from app.api.deps import get_current_user
 from app.main import app
 from app.models.tryon_job import TryOnJob
@@ -397,16 +398,16 @@ async def test_upload_garment_endpoint_creates_valid_https_garment():
             assert data["product"]["title"] == "Custom Linen Shirt"
             assert data["product"]["images"][0].startswith("http")
             assert "garments/" in data["product"]["images"][0]
-            assert data["product"]["images"][0].endswith(".webp")
+            assert data["product"]["images"][0].split("?")[0].endswith(".webp")
 
             # Verify in DB
             garment_id = uuid.UUID(data["product_id"])
-            async with core_db.AsyncSessionLocal() as session:
+            async with TestAsyncSessionLocal() as session:
                 g = await session.get(Garment, garment_id)
                 assert g is not None
                 assert g.product_name == "Custom Linen Shirt"
                 assert g.images[0]["url"].startswith("http")
-                assert g.images[0]["url"].endswith(".webp")
+                assert g.images[0]["url"].split("?")[0].endswith(".webp")
     finally:
         app.dependency_overrides.pop(get_current_user, None)
 

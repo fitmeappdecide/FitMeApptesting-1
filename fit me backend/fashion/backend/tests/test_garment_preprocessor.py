@@ -25,14 +25,13 @@ async def test_garment_preprocessor_model_loading():
 
 @pytest.mark.asyncio
 async def test_garment_preprocessor_category_routing():
-    """Verify semantic label mapping across tops, dresses, bottoms, and ethnic."""
-    # Create test synthetic image
+    """Verify semantic label mapping across tops, dresses, bottoms, ethnic, and footwear."""
     img = Image.new("RGB", (512, 512), color=(180, 50, 50))
     buf = io.BytesIO()
     img.save(buf, format="JPEG")
     test_bytes = buf.getvalue()
 
-    for cat in ["top", "dress", "bottom", "saree"]:
+    for cat in ["top", "dress", "bottom", "saree", "slippers", "shoes", "heels", "mules", "sandals"]:
         res_bytes, report = await garment_preprocessor.preprocess(
             test_bytes,
             garment_type=cat,
@@ -44,12 +43,12 @@ async def test_garment_preprocessor_category_routing():
 
 @pytest.mark.asyncio
 async def test_unsupported_category_passthrough():
-    """Verify shoes and non-apparel pass through raw bytes safely."""
-    raw_bytes = b"MOCK_SHOES_IMAGE_BYTES_1234567890" * 10
+    """Verify unknown non-apparel categories pass through raw bytes safely."""
+    raw_bytes = b"MOCK_UNKNOWN_IMAGE_BYTES_1234567890" * 10
     res_bytes, report = await garment_preprocessor.preprocess(
         raw_bytes,
-        garment_type="shoes",
-        garment_url="https://test.local/shoes.jpg",
+        garment_type="unknown",
+        garment_url="https://test.local/unknown.jpg",
     )
     assert res_bytes == raw_bytes
     assert report["status"] == "PASSTHROUGH_NON_APPAREL"
@@ -204,3 +203,13 @@ async def test_jeans_routing_strictly_excludes_upper_and_dress():
     assert CATEGORY_LABEL_MAP["pants"] == [6, 5]
     assert 4 not in CATEGORY_LABEL_MAP["jeans"]  # Upper excluded
     assert 7 not in CATEGORY_LABEL_MAP["jeans"]  # Dress excluded
+
+
+@pytest.mark.asyncio
+async def test_footwear_routing_uses_left_and_right_shoe_labels():
+    """Verify that footwear categories (slippers, shoes, heels, mules, sandals) map strictly to [9, 10]."""
+    from app.services.preprocessing.garment_preprocessor import CATEGORY_LABEL_MAP
+    for foot_key in ["shoes", "shoe", "slippers", "slipper", "heels", "heel", "mules", "mule", "sandals", "sandal", "flats", "flat", "boots", "boot", "footwear"]:
+        assert CATEGORY_LABEL_MAP[foot_key] == [9, 10]
+        assert 4 not in CATEGORY_LABEL_MAP[foot_key]  # Upper / Shirt excluded
+        assert 7 not in CATEGORY_LABEL_MAP[foot_key]  # Dress excluded

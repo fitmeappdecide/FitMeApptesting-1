@@ -222,15 +222,18 @@ function CustomTabBar({ state, navigation }: any) {
       });
       if (!result.canceled && result.assets[0]) {
         const uri = result.assets[0].uri;
-        useSession.getState().setLocalPhotoUri(uri);
+        useSession.getState().setSourceUrl(null);
+        useSession.getState().setExtractedProduct(null);
+        useSession.getState().setProductId('');
+        useSession.getState().setScanId(null);
+        useSession.getState().setTryOnJobId(null);
+        useSession.getState().setResultImageUrls([]);
+        useSession.getState().setLocalPhotoUri(null);
+        useSession.getState().setSavedPhotoId(null);
+        useSession.getState().setSavedPhotoName(null);
 
-        // Auto-save photo to user's saved photo store
-        useSavedPhotosStore.getState().uploadPhoto(uri).then((saved) => {
-          if (saved) {
-            useSession.getState().setSavedPhotoId(saved.id);
-            useSession.getState().setSavedPhotoName(saved.display_name);
-          }
-        }).catch((err) => console.warn('Auto-save error:', err));
+        // Store captured bottom camera image strictly as the outfit reference image (Quick Try-On)
+        useSession.getState().setProductImageUri(uri);
 
         // Redirect to Upload Your Photo page AFTER photo is clicked/taken
         router.push('/upload-photo' as any);
@@ -253,13 +256,17 @@ function CustomTabBar({ state, navigation }: any) {
                 });
                 if (!libRes.canceled && libRes.assets[0]) {
                   const uri = libRes.assets[0].uri;
-                  useSession.getState().setLocalPhotoUri(uri);
-                  useSavedPhotosStore.getState().uploadPhoto(uri).then((saved) => {
-                    if (saved) {
-                      useSession.getState().setSavedPhotoId(saved.id);
-                      useSession.getState().setSavedPhotoName(saved.display_name);
-                    }
-                  }).catch((e) => console.warn('Auto-save error:', e));
+                  useSession.getState().setSourceUrl(null);
+                  useSession.getState().setExtractedProduct(null);
+                  useSession.getState().setProductId('');
+                  useSession.getState().setScanId(null);
+                  useSession.getState().setTryOnJobId(null);
+                  useSession.getState().setResultImageUrls([]);
+                  useSession.getState().setLocalPhotoUri(null);
+                  useSession.getState().setSavedPhotoId(null);
+                  useSession.getState().setSavedPhotoName(null);
+
+                  useSession.getState().setProductImageUri(uri);
 
                   // Redirect to Upload Your Photo page after photo selection
                   router.push('/upload-photo' as any);

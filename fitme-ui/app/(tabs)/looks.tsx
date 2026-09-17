@@ -146,12 +146,70 @@ export default function Looks() {
   const leftItems = items.filter((_, i) => i % 2 === 0);
   const rightItems = items.filter((_, i) => i % 2 === 1);
 
+function getTryOnCardImageUri(item: any): string {
+  if (!item) return "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=400&q=80";
+
+  // 1. Check thumbnail_url (local cached image URI or remote CDN thumbnail)
+  if (item.thumbnail_url && typeof item.thumbnail_url === 'string' && item.thumbnail_url.trim().length > 0) {
+    return item.thumbnail_url.trim();
+  }
+
+  // 2. Check result_image_urls array
+  if (Array.isArray(item.result_image_urls) && item.result_image_urls.length > 0) {
+    const first = item.result_image_urls[0];
+    if (typeof first === 'string' && first.trim().length > 0) {
+      return first.trim();
+    }
+    if (first && typeof first === 'object' && first.url && typeof first.url === 'string' && first.url.trim().length > 0) {
+      return first.url.trim();
+    }
+  }
+
+  // 3. Stringified result_image_urls
+  if (typeof item.result_image_urls === 'string' && item.result_image_urls.trim().length > 0) {
+    try {
+      const parsed = JSON.parse(item.result_image_urls);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const pFirst = parsed[0];
+        if (typeof pFirst === 'string' && pFirst.trim().length > 0) return pFirst.trim();
+        if (pFirst && typeof pFirst === 'object' && pFirst.url) return pFirst.url.trim();
+      }
+    } catch {
+      return item.result_image_urls.trim();
+    }
+  }
+
+  // 4. Single result_image_url / result_url / image_url / url
+  if (item.result_image_url && typeof item.result_image_url === 'string' && item.result_image_url.trim().length > 0) {
+    return item.result_image_url.trim();
+  }
+  if (item.result_url && typeof item.result_url === 'string' && item.result_url.trim().length > 0) {
+    return item.result_url.trim();
+  }
+
+  // 5. Garment image URLs as fallback
+  if (item.garment_image_url && typeof item.garment_image_url === 'string' && item.garment_image_url.trim().length > 0) {
+    return item.garment_image_url.trim();
+  }
+  if (Array.isArray(item.garment_images) && item.garment_images.length > 0) {
+    const gFirst = item.garment_images[0];
+    if (typeof gFirst === 'string' && gFirst.trim().length > 0) return gFirst.trim();
+    if (gFirst && typeof gFirst === 'object' && gFirst.url) return gFirst.url.trim();
+  }
+
+  // 6. Generic fields
+  if (item.image_url && typeof item.image_url === 'string' && item.image_url.trim().length > 0) {
+    return item.image_url.trim();
+  }
+  if (item.image && typeof item.image === 'string' && item.image.trim().length > 0) {
+    return item.image.trim();
+  }
+
+  return "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=400&q=80";
+}
+
   const LookCard = ({ item, idx }: { item: TryOnHistoryItem; idx: number }) => {
-    const imageUrl =
-      item.thumbnail_url ||
-      (item.result_image_urls && item.result_image_urls.length > 0
-        ? item.result_image_urls[0]
-        : "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=400&q=80");
+    const imageUrl = getTryOnCardImageUri(item);
 
     const displayBrand = getDisplayBrand(item.brand, item.title);
 

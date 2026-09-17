@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, ActivityIndicator, Linking } from 'react-native';
+import React, { useEffect, useState, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, ActivityIndicator, Linking, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -197,41 +197,75 @@ export default function Import() {
     }
   };
 
+  const isSubmittingRef = useRef(false);
+
   const handleContinue = async () => {
     if (!extractedProduct && !productImageUri) return;
+
+    // Single-flight guard: Lock immediately on the first tap synchronously to prevent duplicate taps or swallowed gestures on Android
+    if (isSubmittingRef.current) {
+      if (Platform.OS === 'android') {
+        console.log('[Android Telemetry] Duplicate tap ignored via isSubmittingRef guard');
+      }
+      return;
+    }
+    isSubmittingRef.current = true;
+
+    const tStart = performance.now();
+    if (Platform.OS === 'android') {
+      console.log('[Android Telemetry] Phase A: First tap registered in handler at', tStart.toFixed(2), 'ms');
+    }
+
     setSavingProduct(true);
     setSaveError(null);
-    try {
-      let res: { product_id: string };
 
+    // Reset transient try-on state
+    setScanId(null);
+    setTryOnJobId(null);
+    setResultImageUrls([]);
+    setLocalPhotoUri(null);
+
+    // Create background registration promise so network request runs in parallel
+    const promise = (async () => {
       if (productImageUri) {
         console.log('[PHOTO] Uploading original selected image bytes to Supabase Storage...');
-        res = await productApi.uploadGarment(productImageUri, {
+        return productApi.uploadGarment(productImageUri, {
           title: extractedProduct?.title || 'Uploaded Garment',
           brand: extractedProduct?.brand || '',
           price: extractedProduct?.price || '',
         });
-        console.log('[PHOTO] Garment uploaded and registered with HTTPS URL:', res.product_id);
       } else if (extractedProduct) {
-        res = await productApi.fromExtraction(toExtractedProductInput(extractedProduct));
+        return productApi.fromExtraction(toExtractedProductInput(extractedProduct));
       } else {
         throw new Error('No product to prepare.');
       }
+    })();
 
-      // Atomically reset all transient try-on state before moving to the
-      // upload screen. This guarantees that processing.tsx never picks up a
-      // stale scanId / jobId / result from a previous session.
-      setScanId(null);
-      setTryOnJobId(null);
-      setResultImageUrls([]);
-      setLocalPhotoUri(null);
-      setProductId(res.product_id);
-      router.push('/upload-photo');
-    } catch (e: any) {
-      setSaveError(e.message || 'Unable to prepare this product. Please try again.');
-    } finally {
-      setSavingProduct(false);
+    // Store promise in session store so upload-photo page can await it if user proceeds before upload completes
+    useSession.getState().setGarmentRegistrationPromise(promise);
+
+    // Dispatch router.push('/upload-photo') INSTANTLY (<50ms)!
+    const tNavStart = performance.now();
+    if (Platform.OS === 'android') {
+      console.log('[Android Telemetry] Phase F: Dispatching router.push(/upload-photo), total elapsed:', (tNavStart - tStart).toFixed(2), 'ms');
     }
+    router.push('/upload-photo');
+
+    // Handle resolution asynchronously in background
+    promise
+      .then((res) => {
+        setProductId(res.product_id);
+        useSession.getState().setGarmentRegistrationPromise(null);
+      })
+      .catch((e: any) => {
+        console.warn('Background garment registration error:', e);
+        setSaveError(e.message || 'Unable to prepare this product. Please try again.');
+        useSession.getState().setGarmentRegistrationPromise(null);
+      })
+      .finally(() => {
+        isSubmittingRef.current = false;
+        setSavingProduct(false);
+      });
   };
 
   return (

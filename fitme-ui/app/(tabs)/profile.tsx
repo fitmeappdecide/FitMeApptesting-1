@@ -13,6 +13,7 @@ import { ProMemberBadge } from '../../src/components/ProMemberBadge';
 import * as ImagePicker from 'expo-image-picker';
 import { userApi } from '../../src/services/api';
 import { logout, deleteCurrentUserFromFirebase } from '../../src/firebase/auth';
+import { auth } from '../../src/firebase';
 
 
 /* ─── Types ─────────────────────────────────────────── */
@@ -67,30 +68,50 @@ function MenuRow({
 
 export default function Profile() {
   const router = useRouter();
-  const { isPremium } = useUserStore();
+  const { isPremium, profile, setProfile, clearProfile } = useUserStore();
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
-  const [avatarUri, setAvatarUri] = useState<string | null>(null);
-  const [profileData, setProfileData] = useState<{ user?: { full_name?: string | null; email?: string }; try_on_count?: number; saved_count?: number } | null>(null);
+
+  const firebaseUser = auth?.currentUser;
 
   useFocusEffect(
     useCallback(() => {
       let isMounted = true;
+
+      // 1. Instantly hydrate userStore with firebase user if present
+      if (firebaseUser) {
+        setProfile({
+          full_name: firebaseUser.displayName || profile?.full_name || null,
+          email: firebaseUser.email || profile?.email || null,
+          avatar_uri: firebaseUser.photoURL || profile?.avatar_uri || null,
+        });
+      }
+
+      // 2. Refresh profile details from backend in background
       userApi.getProfile()
         .then((res: any) => {
           if (isMounted && res) {
-            setProfileData(res);
+            setProfile({
+              full_name: res.user?.full_name || res.user?.displayName || firebaseUser?.displayName || profile?.full_name || null,
+              email: res.user?.email || firebaseUser?.email || profile?.email || null,
+              try_on_count: typeof res.try_on_count === 'number' ? res.try_on_count : profile?.try_on_count ?? 0,
+              saved_count: typeof res.saved_count === 'number' ? res.saved_count : profile?.saved_count ?? 0,
+            });
           }
         })
-        .catch(() => {});
+        .catch((err) => {
+          console.warn('[Profile] Background profile sync status:', err?.message || err);
+        });
+
       return () => {
         isMounted = false;
       };
-    }, [])
+    }, [firebaseUser, setProfile])
   );
 
   const handleLogout = async () => {
     setLogoutOpen(false);
+    clearProfile();
     try {
       await logout();
     } finally {
@@ -104,7 +125,9 @@ export default function Profile() {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') return Alert.alert('Permission Denied', 'Camera access is required.');
     const result = await ImagePicker.launchCameraAsync({ allowsEditing: true, aspect: [1, 1], quality: 0.8 });
-    if (!result.canceled) setAvatarUri(result.assets[0].uri);
+    if (!result.canceled && result.assets[0]?.uri) {
+      setProfile({ avatar_uri: result.assets[0].uri });
+    }
   };
 
   const handlePickPhoto = async () => {
@@ -112,12 +135,14 @@ export default function Profile() {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') return Alert.alert('Permission Denied', 'Photo library access is required.');
     const result = await ImagePicker.launchImageLibraryAsync({ allowsEditing: true, aspect: [1, 1], quality: 0.8 });
-    if (!result.canceled) setAvatarUri(result.assets[0].uri);
+    if (!result.canceled && result.assets[0]?.uri) {
+      setProfile({ avatar_uri: result.assets[0].uri });
+    }
   };
 
   const handleRemovePhoto = () => {
     setEditOpen(false);
-    setAvatarUri(null);
+    setProfile({ avatar_uri: null });
   };
 
   /* Contact Support ──────────────────────────────── */
@@ -221,12 +246,16 @@ export default function Profile() {
 
   /* ─── Render ────────────────────────────────────── */
 
-  // Read displayName, email, initials and real statistics from authenticated profile state
-  const displayName = profileData?.user?.full_name || (profileData?.user?.email ? profileData.user.email.split('@')[0] : 'FitMe User');
-  const displayEmail = profileData?.user?.email || '';
-  const initials = displayName.charAt(0).toUpperCase() || 'U';
-  const tryOnCount = profileData?.try_on_count ?? 0;
-  const savedCount = profileData?.saved_count ?? 0;
+  const displayName =
+    profile?.full_name ||
+    firebaseUser?.displayName ||
+    (profile?.email ? profile.email.split('@')[0] : firebaseUser?.email ? firebaseUser.email.split('@')[0] : 'FitMe User');
+
+  const displayEmail = profile?.email || firebaseUser?.email || '';
+  const initials = (displayName.trim().charAt(0) || 'U').toUpperCase();
+  const avatarUri = profile?.avatar_uri || firebaseUser?.photoURL || null;
+  const tryOnCount = profile?.try_on_count ?? 0;
+  const savedCount = profile?.saved_count ?? 0;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
