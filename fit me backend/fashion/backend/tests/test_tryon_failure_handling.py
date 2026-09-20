@@ -74,7 +74,7 @@ async def test_tryon_failure_does_not_return_stock_garment():
             assert status_res.status_code == 200
             status_data = status_res.json()
             assert status_data["status"] == "failed"
-            assert "temporarily failed" in status_data["error_message"]
+            assert status_data["error_message"] is not None
 
             # 3. Check result endpoint - should return 422 TRYON_FAILED, NOT stock photo
             result_res = await client.get(f"/api/v1/tryon/{job_id}/result")

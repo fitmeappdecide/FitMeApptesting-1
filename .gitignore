@@ -13,4 +13,7 @@ dist/
 *adminsdk*.json
 *.apk
 FitMe-release.apk
-
+fitme_dev.db
+*.db
+scratch/
+.pytest_cache/

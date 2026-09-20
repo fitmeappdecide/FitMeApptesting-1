@@ -124,6 +124,8 @@ export default function Import() {
   const setTryOnJobId = useSession((s) => s.setTryOnJobId);
   const setResultImageUrls = useSession((s) => s.setResultImageUrls);
   const setLocalPhotoUri = useSession((s) => s.setLocalPhotoUri);
+  const setSavedPhotoId = useSession((s) => s.setSavedPhotoId);
+  const setSavedPhotoName = useSession((s) => s.setSavedPhotoName);
 
   const [savingProduct, setSavingProduct] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -224,6 +226,8 @@ export default function Import() {
     setTryOnJobId(null);
     setResultImageUrls([]);
     setLocalPhotoUri(null);
+    setSavedPhotoId(null);
+    setSavedPhotoName(null);
 
     // Create background registration promise so network request runs in parallel
     const promise = (async () => {

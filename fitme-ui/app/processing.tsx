@@ -170,31 +170,30 @@ export default function Processing() {
     let activeSavedPhotoId = savedPhotoId;
 
     try {
-      // 1. Auto-save new gallery/camera photo into user's saved photo library
-      if (!activeScanId && !activeSavedPhotoId && localPhotoUri) {
+      // 1. STRICT PRIORITY: If localPhotoUri exists (new camera/gallery capture), it MUST be used for this Try-On.
+      // Ignore any stale activeSavedPhotoId from previous sessions.
+      if (localPhotoUri) {
+        activeSavedPhotoId = null;
+        activeScanId = null;
         targetProgressRef.current = 25;
 
-        try {
-          console.log('⏱️ [CLIENT] Auto-saving photo to saved photos library...');
-          const savedRes = await savedPhotosApi.upload(localPhotoUri);
-          if (savedRes?.id) {
-            activeSavedPhotoId = savedRes.id;
-            setSavedPhotoId(savedRes.id);
-            setSavedPhotoName(savedRes.display_name);
-            console.log('⏱️ [CLIENT] Photo auto-saved to library with ID:', savedRes.id);
+        const tu0 = performance.now();
+        console.log(`⏱️ [CLIENT TELEMETRY] Initiating single savedPhotosApi.upload() @ T+${(tu0 - t0).toFixed(2)}ms`);
+        const savedRes = await savedPhotosApi.upload(localPhotoUri);
+        const tu1 = performance.now();
+        console.log(`⏱️ [CLIENT TELEMETRY] savedPhotosApi.upload() completed in ${(tu1 - tu0).toFixed(2)}ms`);
+
+        if (savedRes?.id) {
+          activeSavedPhotoId = savedRes.id;
+          setSavedPhotoId(savedRes.id);
+          setSavedPhotoName(savedRes.display_name);
+          if (savedRes.scan_id) {
+            activeScanId = savedRes.scan_id;
+            setScanId(activeScanId);
           }
-        } catch (savedErr) {
-          console.warn('Auto-save photo library warning (proceeding with scan):', savedErr);
+          console.log('⏱️ [CLIENT] Photo auto-saved to library with ID:', savedRes.id, 'and scan_id:', savedRes.scan_id);
         }
 
-        const tu0 = performance.now();
-        console.log(`⏱️ [CLIENT TELEMETRY] Initiating scanApi.upload() @ T+${(tu0 - t0).toFixed(2)}ms`);
-        const uploadRes = await scanApi.upload({ front: localPhotoUri }, true);
-        const tu1 = performance.now();
-        console.log(`⏱️ [CLIENT TELEMETRY] scanApi.upload() completed in ${(tu1 - tu0).toFixed(2)}ms`);
-
-        activeScanId = uploadRes.scan_id;
-        setScanId(activeScanId);
         setLocalPhotoUri(null);
       }
 

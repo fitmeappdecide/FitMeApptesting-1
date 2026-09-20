@@ -99,16 +99,27 @@ export function CachedImage({
         const fileInfo = await FileSystem.getInfoAsync(localPath);
 
         if (fileInfo.exists) {
-          setMemoryCache(uri!, localPath);
-          if (isMounted) setLocalUri(localPath);
-          return;
+          // Heuristic check for known old corrupted HTTP error files (< 500 bytes)
+          if (fileInfo.size !== undefined && fileInfo.size < 500) {
+            await FileSystem.deleteAsync(localPath, { idempotent: true });
+            memoryCache.delete(uri!);
+          } else {
+            setMemoryCache(uri!, localPath);
+            if (isMounted) setLocalUri(localPath);
+            return;
+          }
         }
 
         // Fast download to local phone disk cache in background
         const downloadRes = await FileSystem.downloadAsync(uri!, localPath);
-        if (isMounted && downloadRes?.uri) {
+        // Only cache HTTP 200 responses
+        if (downloadRes?.status === 200 && downloadRes?.uri) {
           setMemoryCache(uri!, downloadRes.uri);
           if (isMounted) setLocalUri(downloadRes.uri);
+        } else {
+          // Immediately reject and delete non-200 responses
+          await FileSystem.deleteAsync(localPath, { idempotent: true });
+          memoryCache.delete(uri!);
         }
       } catch (err) {
         // Direct network URI is already displayed, ignore background cache failure
@@ -123,6 +134,12 @@ export function CachedImage({
   }, [uri]);
 
   const [hasError, setHasError] = useState(false);
+  const hasRetriedRef = React.useRef(false);
+
+  useEffect(() => {
+    hasRetriedRef.current = false;
+    setHasError(false);
+  }, [uri]);
 
   if (source) {
     return <Image source={source} style={style} {...props} />;
@@ -137,6 +154,18 @@ export function CachedImage({
       source={{ uri: localUri }}
       style={style}
       onError={() => {
+        // Evict corrupted cached file & retry network URL AT MOST ONCE to prevent infinite loops
+        if (localUri && (localUri.startsWith(CACHE_FOLDER) || localUri.startsWith('file://'))) {
+          FileSystem.deleteAsync(localUri, { idempotent: true }).catch(() => {});
+          if (uri) memoryCache.delete(uri);
+
+          if (uri && uri !== localUri && !uri.startsWith('file://') && !hasRetriedRef.current) {
+            hasRetriedRef.current = true;
+            setLocalUri(uri);
+            setHasError(false);
+            return;
+          }
+        }
         setHasError(true);
       }}
       {...props}

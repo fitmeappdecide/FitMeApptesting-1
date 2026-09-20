@@ -195,3 +195,33 @@ async def test_tryon_saved_photo_snapshot_and_deletion():
             all_history = await client.get("/api/v1/tryon/history")
             assert all_history.status_code == 200
             assert any(item["id"] == str(job_id) for item in all_history.json())
+
+
+@pytest.mark.asyncio
+async def test_upload_saved_photo_generates_bodyscan_and_profile():
+    """Test that upload_saved_photo automatically generates BodyScan and BodyProfile server-side and returns scan_id."""
+    with patch("app.api.saved_photos.upload_user_photo"), \
+         patch("app.api.saved_photos.create_signed_photo_url", return_value="https://signed.url/photo.jpg"):
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            res = await client.post(
+                "/api/v1/photos/upload",
+                files={"file": ("consolidated_test.jpg", DUMMY_JPEG + b"\x99", "image/jpeg")},
+            )
+            assert res.status_code == 201
+            data = res.json()
+            assert "id" in data
+            assert "scan_id" in data
+            assert data["scan_id"] is not None
+
+            # Verify duplicate photo upload reuses the photo and returns the matching scan_id
+            res_dup = await client.post(
+                "/api/v1/photos/upload",
+                files={"file": ("consolidated_test_dup.jpg", DUMMY_JPEG + b"\x99", "image/jpeg")},
+            )
+            assert res_dup.status_code == 201
+            data_dup = res_dup.json()
+            assert data_dup["id"] == data["id"]
+            assert data_dup["scan_id"] == data["scan_id"]
+

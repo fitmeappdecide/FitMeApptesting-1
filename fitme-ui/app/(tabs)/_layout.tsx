@@ -235,8 +235,8 @@ function CustomTabBar({ state, navigation }: any) {
         // Store captured bottom camera image strictly as the outfit reference image (Quick Try-On)
         useSession.getState().setProductImageUri(uri);
 
-        // Redirect to Upload Your Photo page AFTER photo is clicked/taken
-        router.push('/upload-photo' as any);
+        // Redirect to Product Preview page AFTER photo is clicked/taken
+        router.push('/import' as any);
       }
     } catch (err: any) {
       console.warn('Camera launcher error (e.g. simulator):', err);
@@ -268,8 +268,8 @@ function CustomTabBar({ state, navigation }: any) {
 
                   useSession.getState().setProductImageUri(uri);
 
-                  // Redirect to Upload Your Photo page after photo selection
-                  router.push('/upload-photo' as any);
+                  // Redirect to Product Preview page after photo selection
+                  router.push('/import' as any);
                 }
               } catch (libErr) {
                 console.warn('Gallery fallback error:', libErr);

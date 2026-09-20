@@ -152,7 +152,7 @@ export const RETAILER_REGISTRY: Record<string, RetailerDefinition> = {
 /** Neutral fallback definition for unrecognized retailers. */
 export const UNKNOWN_RETAILER: RetailerDefinition = {
   id: 'unknown',
-  name: 'Store',
+  name: 'FitMe',
   aliases: [],
   domains: [],
   logoAsset: null,
@@ -165,7 +165,7 @@ export const UNKNOWN_RETAILER: RetailerDefinition = {
  *
  * Guarantees:
  * - Deterministic resolution for all alias/domain variations.
- * - Safe fallback for unrecognized or custom boutiques.
+ * - Safe fallback for unrecognized or custom boutiques (FitMe with NO icon).
  * - Zero letter-initial generation or fake branding.
  */
 export function normalizeRetailer(raw?: string | null): RetailerDefinition {
@@ -197,37 +197,8 @@ export function normalizeRetailer(raw?: string | null): RetailerDefinition {
     }
   }
 
-  // 3. Fallback for custom / unmapped boutique stores
-  // Clean up domain if raw string was a URL
-  let cleanName = trimmed;
-  if (/^https?:\/\//i.test(cleanName)) {
-    try {
-      const match = cleanName.match(/^https?:\/\/(?:www\.)?([^\/\?#]+)/i);
-      if (match && match[1]) {
-        const host = match[1];
-        const parts = host.split('.');
-        if (parts.length >= 2) {
-          cleanName = parts[0];
-        } else {
-          cleanName = host;
-        }
-      }
-    } catch {
-      cleanName = 'Online Store';
-    }
-  }
-
-  // Capitalize neatly
-  if (cleanName.length > 0 && cleanName !== 'Online Store') {
-    cleanName = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
-  } else {
-    cleanName = 'Store';
-  }
-
-  return {
-    ...UNKNOWN_RETAILER,
-    name: cleanName,
-  };
+  // 3. Fallback for unrecognized, missing, or unmapped boutique stores -> FitMe
+  return UNKNOWN_RETAILER;
 }
 
 /**

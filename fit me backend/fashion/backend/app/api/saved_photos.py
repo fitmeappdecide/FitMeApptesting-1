@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 import os
 import re
@@ -12,10 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import api_error, get_current_user, get_current_user_or_anonymous
 from app.core.config import settings
 from app.core.database import get_db
+from app.models.body_profile import BodyProfile
+from app.models.body_scan import BodyScan
 from app.models.tryon_job import TryOnJob
 from app.models.user import User
 from app.models.user_saved_photo import UserSavedPhoto
 from app.schemas.saved_photo import SavedPhotoPublic, SavedPhotoRenameRequest
+from app.services.body_analysis import analyse_body, cluster_key
 from app.services.storage_service import (
     build_encrypted_storage_ref,
     create_signed_photo_url,
@@ -23,6 +26,7 @@ from app.services.storage_service import (
     optimize_user_photo,
     upload_user_photo,
 )
+from app.utils.encryption import decrypt_text, encrypt_text
 from app.utils.validators import validate_image_upload
 
 router = APIRouter(prefix="/api/v1/photos", tags=["saved_photos"])
@@ -30,7 +34,7 @@ router = APIRouter(prefix="/api/v1/photos", tags=["saved_photos"])
 AUTO_NAME_PATTERN = re.compile(r"^(My Photo \d+|photo\.jpg)$", re.IGNORECASE)
 
 
-def _to_public_schema(photo: UserSavedPhoto) -> SavedPhotoPublic:
+def _to_public_schema(photo: UserSavedPhoto, scan_id: uuid.UUID | None = None) -> SavedPhotoPublic:
     signed_url = create_signed_photo_url(photo.storage_path, expires_in=3600)
     return SavedPhotoPublic(
         id=photo.id,
@@ -40,9 +44,86 @@ def _to_public_schema(photo: UserSavedPhoto) -> SavedPhotoPublic:
         original_filename=photo.original_filename,
         mime_type=photo.mime_type,
         signed_url=signed_url,
+        scan_id=scan_id,
         created_at=photo.created_at,
         updated_at=photo.updated_at,
     )
+
+
+async def _create_body_scan_and_profile(
+    user: User,
+    storage_path: str,
+    image_bytes: bytes,
+    db: AsyncSession,
+) -> BodyScan:
+    profile_id = None
+    smplx_params = None
+
+    if settings.enable_body_analysis:
+        measurements = analyse_body(image_bytes, None, None, None)
+        profile = BodyProfile(
+            user_id=user.id,
+            height_cm=measurements.height_cm,
+            chest_cm=measurements.chest_cm,
+            waist_cm=measurements.waist_cm,
+            hips_cm=measurements.hips_cm,
+            shoulder_width_cm=measurements.shoulder_width_cm,
+            inseam_cm=measurements.inseam_cm,
+            sleeve_cm=measurements.sleeve_cm,
+            skin_tone_fitzpatrick=measurements.skin_tone_fitzpatrick,
+            skin_tone_hex=measurements.skin_tone_hex,
+            body_type=measurements.body_type,
+            face_embedding_ref=measurements.face_embedding_ref,
+            cluster_key=cluster_key(measurements),
+        )
+        db.add(profile)
+        await db.flush()
+        profile_id = profile.id
+        smplx_params = measurements.smplx_params
+
+    scan = BodyScan(
+        user_id=user.id,
+        front_photo_url_encrypted=encrypt_text(storage_path),
+        back_photo_url_encrypted=None,
+        left_photo_url_encrypted=None,
+        right_photo_url_encrypted=None,
+        smplx_params=smplx_params,
+        processing_status="completed",
+        body_profile_id=profile_id,
+        consent_given=True,
+        photos_deleted_at=datetime.now(UTC) + timedelta(hours=24),
+    )
+    db.add(scan)
+    return scan
+
+
+async def _find_or_create_scan_for_photo(
+    user: User,
+    photo: UserSavedPhoto,
+    image_bytes: bytes | None,
+    db: AsyncSession,
+) -> uuid.UUID | None:
+    scan_stmt = (
+        select(BodyScan)
+        .where(BodyScan.user_id == user.id)
+        .order_by(BodyScan.created_at.desc())
+    )
+    scans = (await db.scalars(scan_stmt)).all()
+    for s in scans:
+        try:
+            decrypted_path = decrypt_text(s.front_photo_url_encrypted)
+        except Exception:
+            decrypted_path = s.front_photo_url_encrypted
+        if decrypted_path == photo.storage_path:
+            return s.id
+
+    if image_bytes:
+        scan = await _create_body_scan_and_profile(user, photo.storage_path, image_bytes, db)
+        await db.commit()
+        await db.refresh(scan)
+        return scan.id
+
+    return None
 
 
 @router.post("/upload", response_model=SavedPhotoPublic, status_code=status.HTTP_201_CREATED)
@@ -66,7 +147,8 @@ async def upload_saved_photo(
     )
     existing_photo = (await db.scalars(existing_stmt)).first()
     if existing_photo:
-        return _to_public_schema(existing_photo)
+        scan_id_val = await _find_or_create_scan_for_photo(user, existing_photo, image_bytes, db)
+        return _to_public_schema(existing_photo, scan_id=scan_id_val)
 
     # 2. Genuinely new image: compute auto-name
     clean_name = display_name.strip() if isinstance(display_name, str) and display_name.strip() else None
@@ -101,10 +183,15 @@ async def upload_saved_photo(
         content_hash=content_hash,
     )
     db.add(saved_photo)
+
+    # Auto-generate matching BodyScan and BodyProfile from the uploaded photo
+    scan = await _create_body_scan_and_profile(user, storage_path, image_bytes, db)
+
     try:
         await db.commit()
         await db.refresh(saved_photo)
-        return _to_public_schema(saved_photo)
+        await db.refresh(scan)
+        return _to_public_schema(saved_photo, scan_id=scan.id)
     except IntegrityError:
         # Race condition safety: another concurrent request committed this exact (user_id, content_hash)
         await db.rollback()
@@ -116,7 +203,8 @@ async def upload_saved_photo(
         # Return the winning canonical record
         winning_photo = (await db.scalars(existing_stmt)).first()
         if winning_photo:
-            return _to_public_schema(winning_photo)
+            scan_id_val = await _find_or_create_scan_for_photo(user, winning_photo, image_bytes, db)
+            return _to_public_schema(winning_photo, scan_id=scan_id_val)
         raise
 
 

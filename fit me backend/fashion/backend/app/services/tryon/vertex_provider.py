@@ -2,6 +2,7 @@ import os
 import uuid
 import time
 import tempfile
+import asyncio
 from typing import Literal
 
 import httpx
@@ -239,14 +240,15 @@ class VertexProvider(TryOnProvider):
             person_path = None
             garment_path = None
             try:
-                # Preprocess user image (smart framing if person is small)
-                prepared_user_bytes, prep_report = preprocess_user_image(user_bytes)
-
-                # Preprocess garment reference (SegFormer Ghost-Mannequin isolation)
-                prepared_garment_bytes, garment_report = await garment_preprocessor.preprocess(
+                # Preprocess user image & garment reference concurrently
+                user_task = asyncio.to_thread(preprocess_user_image, user_bytes)
+                garment_task = garment_preprocessor.preprocess(
                     garment_bytes,
                     garment_type=garment_type,
                     garment_url=garment_image_url,
+                )
+                (prepared_user_bytes, prep_report), (prepared_garment_bytes, garment_report) = await asyncio.gather(
+                    user_task, garment_task
                 )
 
                 person_image, person_path = self._image_from_bytes(prepared_user_bytes, suffix=".png")
@@ -290,11 +292,14 @@ class VertexProvider(TryOnProvider):
                     storage_path = f"tryon_results/{res_uuid}.{ext}"
                     thumb_storage_path = f"tryon_results/thumb_{res_uuid}.{thumb_ext}"
 
-                    upload_image_to_storage(canonical_bytes, storage_path)
-                    upload_image_to_storage(thumb_bytes, thumb_storage_path)
+                    # Parallelize canonical WebP and thumbnail uploads to Supabase Storage
+                    await asyncio.gather(
+                        asyncio.to_thread(upload_image_to_storage, canonical_bytes, storage_path),
+                        asyncio.to_thread(upload_image_to_storage, thumb_bytes, thumb_storage_path),
+                    )
 
-                    signed_res_url = create_signed_photo_url(storage_path, expires_in=7200)
-                    public_url = signed_res_url if signed_res_url else storage_path
+                    # Return canonical relative storage path so tryon_jobs DB record permanently stores stable reference
+                    public_url = storage_path
                 except Exception as s_err:
                     print(f"Supabase storage upload notice ({s_err}), using instant high-res Data URI")
                     import base64

@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     app_name: str = "FitMe"
     environment: str = "development"
     enable_body_analysis: bool = False
-    database_url: str = "postgresql+asyncpg://fitme:fitme@localhost:5432/fitme"
+    database_url: str = Field(default="sqlite+aiosqlite:///fitme_dev.db", description="Database URL. Defaults to local SQLite for standalone dev.")
     redis_url: str = "redis://localhost:6379/0"
     jwt_secret_key: str = Field(default="change-this-in-production")
     jwt_algorithm: str = "HS256"

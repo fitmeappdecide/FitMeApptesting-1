@@ -48,27 +48,13 @@ export function RetailerLogo({
       );
     }
 
-    // Neutral premium shopping store fallback (Zero fake letter badges)
-    return (
-      <View
-        style={[
-          styles.fallbackContainer,
-          {
-            width: pixelSize,
-            height: pixelSize,
-            borderRadius: Math.round(pixelSize * 0.25),
-          },
-          imageStyle,
-        ]}
-      >
-        <Ionicons
-          name="bag-handle-outline"
-          size={Math.max(12, Math.round(pixelSize * 0.6))}
-          color={Colors.foreground}
-        />
-      </View>
-    );
+    // Unrecognized or missing platform: return null (NO icon)
+    return null;
   };
+
+  if (!def.logoAsset && !showName) {
+    return null;
+  }
 
   if (showName) {
     return (

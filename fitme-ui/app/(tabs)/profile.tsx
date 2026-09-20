@@ -7,6 +7,7 @@ import { useRouter, Link, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { AppHeader } from '../../src/components/AppHeader';
+import { CachedImage } from '../../src/components/CachedImage';
 import { Colors, Spacing, Radii } from '../../src/constants/theme';
 import { useUserStore } from '../../src/services/userStore';
 import { ProMemberBadge } from '../../src/components/ProMemberBadge';
@@ -68,7 +69,7 @@ function MenuRow({
 
 export default function Profile() {
   const router = useRouter();
-  const { isPremium, profile, setProfile, clearProfile } = useUserStore();
+  const { isPremium, profile, setProfile, clearProfile, fetchProfile } = useUserStore();
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
 
@@ -76,37 +77,18 @@ export default function Profile() {
 
   useFocusEffect(
     useCallback(() => {
-      let isMounted = true;
-
-      // 1. Instantly hydrate userStore with firebase user if present
-      if (firebaseUser) {
+      // 1. Non-destructively merge Firebase auth fields if present and store has not yet populated them
+      if (firebaseUser && (!profile?.full_name || !profile?.email || !profile?.avatar_uri)) {
         setProfile({
-          full_name: firebaseUser.displayName || profile?.full_name || null,
-          email: firebaseUser.email || profile?.email || null,
-          avatar_uri: firebaseUser.photoURL || profile?.avatar_uri || null,
+          full_name: profile?.full_name || firebaseUser.displayName || null,
+          email: profile?.email || firebaseUser.email || null,
+          avatar_uri: profile?.avatar_uri || firebaseUser.photoURL || null,
         });
       }
 
-      // 2. Refresh profile details from backend in background
-      userApi.getProfile()
-        .then((res: any) => {
-          if (isMounted && res) {
-            setProfile({
-              full_name: res.user?.full_name || res.user?.displayName || firebaseUser?.displayName || profile?.full_name || null,
-              email: res.user?.email || firebaseUser?.email || profile?.email || null,
-              try_on_count: typeof res.try_on_count === 'number' ? res.try_on_count : profile?.try_on_count ?? 0,
-              saved_count: typeof res.saved_count === 'number' ? res.saved_count : profile?.saved_count ?? 0,
-            });
-          }
-        })
-        .catch((err) => {
-          console.warn('[Profile] Background profile sync status:', err?.message || err);
-        });
-
-      return () => {
-        isMounted = false;
-      };
-    }, [firebaseUser, setProfile])
+      // 2. Refresh profile details in background using store's deduplicated & TTL-governed fetchProfile
+      fetchProfile(false).catch(() => {});
+    }, [firebaseUser, profile, setProfile, fetchProfile])
   );
 
   const handleLogout = async () => {
@@ -270,7 +252,7 @@ export default function Profile() {
           <View style={styles.avatarWrap}>
             <View style={styles.avatar}>
               {avatarUri ? (
-                <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
+                <CachedImage uri={avatarUri} style={styles.avatarImage} />
               ) : (
                 <Text style={styles.avatarInitial}>{initials}</Text>
               )}

@@ -12,6 +12,7 @@ class SavedPhotoPublic(BaseModel):
     original_filename: str | None = None
     mime_type: str = "image/jpeg"
     signed_url: str | None = None
+    scan_id: uuid.UUID | None = None
     created_at: datetime
     updated_at: datetime
 

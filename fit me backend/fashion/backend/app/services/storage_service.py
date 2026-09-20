@@ -378,12 +378,16 @@ def sign_if_private(url_or_ref: str, expires_in: int = 7200) -> str:
 
     bucket_name = settings.supabase_storage_bucket
     public_prefix = f"/storage/v1/object/public/{bucket_name}/"
+    sign_prefix = f"/storage/v1/object/sign/{bucket_name}/"
 
     is_private = False
     clean_path = url_or_ref
 
     if public_prefix in clean_path:
         clean_path = clean_path.split(public_prefix, 1)[1]
+        is_private = True
+    elif sign_prefix in clean_path:
+        clean_path = clean_path.split(sign_prefix, 1)[1]
         is_private = True
     elif f"/{bucket_name}/" in clean_path:
         clean_path = clean_path.split(f"/{bucket_name}/", 1)[1]
@@ -400,12 +404,14 @@ def sign_if_private(url_or_ref: str, expires_in: int = 7200) -> str:
         clean_path = clean_path[len(bucket_name) + 1 :]
         is_private = True
 
-    # If already a signed Supabase URL with token query param, return as is
-    if is_private and "token=" in url_or_ref:
-        return url_or_ref
+    # Strip existing query params (e.g. old ?token=...)
+    clean_path = clean_path.split("?")[0]
+
+    # Strip leading bucket name if present
+    if clean_path.startswith(f"{bucket_name}/"):
+        clean_path = clean_path[len(bucket_name) + 1 :]
 
     if is_private:
-        clean_path = clean_path.split("?")[0]
         signed = create_signed_photo_url(clean_path, expires_in=expires_in)
         if signed:
             return signed

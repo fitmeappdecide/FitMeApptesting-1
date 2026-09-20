@@ -70,9 +70,9 @@ export default function UploadPhoto() {
   }, [savedPhotos, selectedSavedId, setSavedPhotoId, setSavedPhotoName, setLocalPhotoUri]);
 
   const selectSavedPhoto = (id: string, uri: string, name: string) => {
+    setLocalPhotoUri(null);
     setSelectedSavedId(id);
     setPhotoUri(uri);
-    setLocalPhotoUri(uri);
     setSavedPhotoId(id);
     setSavedPhotoName(name);
   };
@@ -90,10 +90,14 @@ export default function UploadPhoto() {
     });
     if (!result.canceled && result.assets[0]) {
       const uri = result.assets[0].uri;
+      // Synchronously clear old saved photo state so a previous photo ID never overrides a new capture
+      setSelectedSavedId(null);
+      setSavedPhotoId(null);
+      setSavedPhotoName(null);
       setPhotoUri(uri);
       setLocalPhotoUri(uri);
       uploadPhoto(uri).then((saved) => {
-        if (saved) {
+        if (saved && useSession.getState().localPhotoUri === uri) {
           setSelectedSavedId(saved.id);
           setSavedPhotoId(saved.id);
           setSavedPhotoName(saved.display_name);
@@ -117,10 +121,14 @@ export default function UploadPhoto() {
     });
     if (!result.canceled && result.assets[0]) {
       const uri = result.assets[0].uri;
+      // Synchronously clear old saved photo state so a previous photo ID never overrides a new selection
+      setSelectedSavedId(null);
+      setSavedPhotoId(null);
+      setSavedPhotoName(null);
       setPhotoUri(uri);
       setLocalPhotoUri(uri);
       uploadPhoto(uri).then((saved) => {
-        if (saved) {
+        if (saved && useSession.getState().localPhotoUri === uri) {
           setSelectedSavedId(saved.id);
           setSavedPhotoId(saved.id);
           setSavedPhotoName(saved.display_name);
@@ -158,6 +166,16 @@ export default function UploadPhoto() {
 
     setSubmitting(true);
     try {
+      // Synchronously lock the exact currently selected model photo into session state
+      if (selectedSavedId) {
+        setSavedPhotoId(selectedSavedId);
+        setLocalPhotoUri(null);
+      } else {
+        setSavedPhotoId(null);
+        setSavedPhotoName(null);
+        setLocalPhotoUri(photoUri);
+      }
+
       // 1. If background garment registration promise is pending from import.tsx, await it first
       const pendingPromise = useSession.getState().garmentRegistrationPromise;
       if (pendingPromise && !productId) {
@@ -178,7 +196,6 @@ export default function UploadPhoto() {
         return;
       }
 
-      setLocalPhotoUri(photoUri);
       router.push('/processing');
     } catch (err: any) {
       console.error('[TRY-ON] Error preparing garment reference:', err);
@@ -200,30 +217,9 @@ export default function UploadPhoto() {
           <Text style={styles.privacyText}>Your photos are private and never shared.</Text>
         </View>
 
-        {/* 1. OUTFIT TO TRY (Reference Outfit Section when bottom camera image exists) */}
-        {productImageUri ? (
-          <View style={styles.outfitRefCard}>
-            <View style={styles.outfitRefHeader}>
-              <View style={styles.outfitTag}>
-                <Ionicons name="sparkles" size={12} color="#FFFFFF" />
-                <Text style={styles.outfitTagText}>OUTFIT TO TRY</Text>
-              </View>
-              <TouchableOpacity onPress={handleRetakeOutfitReference} style={styles.retakeBtn} activeOpacity={0.7}>
-                <Ionicons name="camera-reverse-outline" size={14} color={Colors.accent} />
-                <Text style={styles.retakeBtnText}>Change outfit</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.outfitImgWrap}>
-              <CachedImage uri={productImageUri} style={styles.outfitImg} />
-            </View>
-          </View>
-        ) : null}
-
-        {/* 2. CHOOSE YOUR PHOTO (User Model Photo Section) */}
+        {/* User Model Photo Section */}
         <View style={styles.sectionHeaderWrap}>
-          <Text style={styles.sectionHeading}>
-            {productImageUri ? 'Choose your model photo' : 'Add your photo'}
-          </Text>
+          <Text style={styles.sectionHeading}>Add your photo</Text>
           <Text style={styles.sectionSubheading}>
             Select your model photo below to try on the outfit.
           </Text>

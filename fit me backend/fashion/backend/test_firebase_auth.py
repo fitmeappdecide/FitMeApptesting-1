@@ -1,6 +1,6 @@
 import asyncio
 from unittest.mock import patch
-from app.core.database import SessionLocal
+from app.core.database import AsyncSessionLocal
 from app.api.auth import login_firebase
 from app.schemas.auth import FirebaseLoginRequest
 import pytest

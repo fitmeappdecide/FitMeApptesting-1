@@ -228,41 +228,25 @@ export type RequestOptions = RequestInit & { timeoutMs?: number; silentTimeout?:
 
 export async function request<T>(endpoint: string, options: RequestOptions = {}, retry = true): Promise<T> {
   const currentBaseUrl = getBaseUrl();
-  console.log('REQUEST FUNCTION CALLED');
-  console.log('BASE_URL:', currentBaseUrl);
   const isForm = options.body instanceof FormData;
-  console.log('Endpoint:', endpoint);
-  console.log('Method:', options.method ?? 'GET');
-  console.log('Headers before merge:', options.headers);
-  console.log('Body (type):', options.body ? (options.body instanceof FormData ? 'FormData' : typeof options.body) : 'undefined');
 
   let response: Response;
   const timeoutMs = options.timeoutMs ?? 60_000;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    console.log('REQUEST URL:', `${currentBaseUrl}${endpoint}`);
-    console.log('Sending request...');
     const token = await getValidAccessToken();
     const finalHeaders = {
       ...(isForm ? {} : { 'Content-Type': 'application/json' }),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     };
-    console.log('Final headers being sent:', finalHeaders);
     response = await fetch(`${currentBaseUrl}${endpoint}`, {
       ...options,
       headers: finalHeaders,
       signal: controller.signal,
     });
   } catch (err: any) {
-    console.log("============= FETCH ERROR =============");
-    console.log("Endpoint:", endpoint);
-    console.log("URL Called:", `${currentBaseUrl}${endpoint}`);
-    console.log("Error Name:", err?.name);
-    console.log("Error Message:", err?.message);
-    console.log("Error Cause:", err?.cause);
-    console.log("============= END FETCH ERROR =============");
     if (err?.name === 'AbortError') {
       console.log(`[Network Timeout/Abort] ${endpoint}`);
       if (options.silentTimeout) {
@@ -307,17 +291,14 @@ export async function request<T>(endpoint: string, options: RequestOptions = {},
     throw new ApiError(response.status, message, code);
   }
 
-    console.log('Response status:', response.status);
-  const respText = await response.text();
-  console.log('Response body (text):', respText.length > 500 ? respText.substring(0, 500) + '... [truncated]' : respText);
   if (response.status === 204) return undefined as T;
+  const respText = await response.text();
   // Try to parse JSON if possible, otherwise return raw text
   try {
     return JSON.parse(respText) as T;
   } catch {
     return respText as unknown as T;
   }
-  return response.json() as Promise<T>;
 }
 
 // ─── AUTH ── /api/v1/auth ───────────────────────────────────────────
@@ -930,6 +911,7 @@ export type SavedPhoto = {
   original_filename?: string | null;
   mime_type?: string;
   signed_url?: string | null;
+  scan_id?: string | null;
   created_at: string;
   updated_at: string;
 };

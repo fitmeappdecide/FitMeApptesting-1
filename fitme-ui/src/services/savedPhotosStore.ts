@@ -15,6 +15,8 @@ type SavedPhotosState = {
   clearAll: () => void;
 };
 
+let inFlightFetchPhotos: Promise<void> | null = null;
+
 export const useSavedPhotosStore = create<SavedPhotosState>()(
   persist(
     (set, get) => ({
@@ -23,22 +25,31 @@ export const useSavedPhotosStore = create<SavedPhotosState>()(
       error: null,
 
       fetchPhotos: async () => {
-        try {
-          if (get().photos.length === 0) {
-            set({ loading: true, error: null });
-          }
-          const remotePhotos = await savedPhotosApi.list();
-          if (Array.isArray(remotePhotos)) {
-            // Only keep real user photos (exclude demo mock photos)
-            const realPhotos = remotePhotos.filter((p) => !p.id.startsWith('demo-'));
-            set({ photos: realPhotos });
-          }
-        } catch (err: any) {
-          console.warn('Failed to fetch saved photos from backend:', err?.message);
-          set({ error: err?.message || 'Could not load saved photos' });
-        } finally {
-          set({ loading: false });
+        if (inFlightFetchPhotos) {
+          return inFlightFetchPhotos;
         }
+
+        inFlightFetchPhotos = (async () => {
+          try {
+            if (get().photos.length === 0) {
+              set({ loading: true, error: null });
+            }
+            const remotePhotos = await savedPhotosApi.list();
+            if (Array.isArray(remotePhotos)) {
+              // Only keep real user photos (exclude demo mock photos)
+              const realPhotos = remotePhotos.filter((p) => !p.id.startsWith('demo-'));
+              set({ photos: realPhotos });
+            }
+          } catch (err: any) {
+            console.warn('Failed to fetch saved photos from backend:', err?.message);
+            set({ error: err?.message || 'Could not load saved photos' });
+          } finally {
+            set({ loading: false });
+            inFlightFetchPhotos = null;
+          }
+        })();
+
+        return inFlightFetchPhotos;
       },
 
       uploadPhoto: async (uri: string, name?: string) => {

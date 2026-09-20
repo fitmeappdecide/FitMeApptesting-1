@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, TextInput,
-  KeyboardAvoidingView, Platform, ScrollView, Image, Alert,
+  View, Text, StyleSheet, TouchableOpacity, Image, Alert, Linking,
 } from 'react-native';
-import { useRouter, Link } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Logo } from '../src/components/Logo';
@@ -118,152 +117,189 @@ export default function Login() {
     }
   };
 
+  const handleAppleSignIn = () => {
+    Alert.alert('Coming soon', 'Sign in with Apple requires capability setup — see README for adding it.');
+  };
+
+  const handleTerms = () => {
+    Linking.openURL('https://fitme.app/terms');
+  };
+
+  const handlePrivacy = () => {
+    Linking.openURL('https://fitme.app/privacy');
+  };
+
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          <View style={styles.logoBlock}>
-            <Logo size={32} />
-            <Text style={styles.subtitle}>Welcome back</Text>
+      <View style={styles.content}>
+        {/* Top: Logo */}
+        <View style={styles.logoBlock}>
+          <Logo size={32} />
+        </View>
+
+        {/* Center: Illustration Image */}
+        <View style={styles.imageContainer}>
+          <Image
+            source={require('../assets/sign-image.png')}
+            style={styles.heroImage}
+            resizeMode="contain"
+          />
+        </View>
+
+        {/* Bottom: Auth Buttons & Legal Text */}
+        <View style={styles.bottomSection}>
+          <View style={styles.buttonGroup}>
+            {/* Continue with Google */}
+            <TouchableOpacity
+              style={styles.authBtn}
+              onPress={handleGoogleSignIn}
+              disabled={loading}
+              activeOpacity={0.8}
+            >
+              <View style={styles.btnContent}>
+                <View style={styles.iconWrap}>
+                  <Image
+                    source={require('../assets/images/google-logo.png')}
+                    style={styles.googleIcon}
+                    resizeMode="contain"
+                  />
+                </View>
+                <Text style={styles.btnText}>Continue with Google</Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* Continue with Apple */}
+            <TouchableOpacity
+              style={styles.authBtn}
+              onPress={handleAppleSignIn}
+              activeOpacity={0.8}
+            >
+              <View style={styles.btnContent}>
+                <View style={styles.iconWrap}>
+                  <Ionicons name="logo-apple" size={19} color={Colors.foreground} />
+                </View>
+                <Text style={styles.btnText}>Continue with Apple</Text>
+              </View>
+            </TouchableOpacity>
           </View>
 
-          <View style={styles.form}>
-            <Text style={styles.label}>EMAIL</Text>
-            <TextInput
-              style={styles.input}
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              placeholderTextColor={Colors.mutedForeground}
-            />
-
-            <Text style={[styles.label, { marginTop: Spacing.md }]}>PASSWORD</Text>
-            <View style={styles.passwordRow}>
-              <TextInput
-                style={[styles.input, { flex: 1, borderWidth: 0, paddingRight: 40 }]}
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry={!showPass}
-                placeholderTextColor={Colors.mutedForeground}
-              />
-              <TouchableOpacity style={styles.eyeBtn} onPress={() => setShowPass(!showPass)}>
-                <Ionicons name={showPass ? 'eye-off-outline' : 'eye-outline'} size={18} color={Colors.mutedForeground} />
+          {/* Legal Text */}
+          <View style={styles.legalBlock}>
+            <Text style={styles.legalText}>By continuing, you agree to our</Text>
+            <View style={styles.legalLinksRow}>
+              <TouchableOpacity onPress={handleTerms} activeOpacity={0.7}>
+                <Text style={styles.legalLink}>Terms of Service</Text>
+              </TouchableOpacity>
+              <Text style={styles.legalText}> and </Text>
+              <TouchableOpacity onPress={handlePrivacy} activeOpacity={0.7}>
+                <Text style={styles.legalLink}>Privacy Policy</Text>
               </TouchableOpacity>
             </View>
-            <View style={[styles.inputBorder]} />
-
-            <TouchableOpacity style={styles.forgotRow}>
-              <Text style={styles.forgotText}>Forgot password?</Text>
-            </TouchableOpacity>
-
-            {error && <Text style={styles.errorText}>{error}</Text>}
-
-            <TouchableOpacity style={[styles.primaryBtn, loading && { opacity: 0.6 }]} onPress={handleSignIn} disabled={loading}>
-              <Text style={styles.primaryBtnText}>{loading ? 'Signing in…' : 'Sign in'}</Text>
-            </TouchableOpacity>
           </View>
-
-          <View style={styles.dividerRow}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>or continue with</Text>
-            <View style={styles.dividerLine} />
-          </View>
-
-          <View style={styles.socialBtns}>
-            <TouchableOpacity style={styles.socialBtn} onPress={handleGoogleSignIn} disabled={loading} activeOpacity={0.7}>
-              <View style={styles.socialIconWrap}>
-                <Image
-                  source={require('../assets/images/google-logo.png')}
-                  style={{ width: 17, height: 17 }}
-                  resizeMode="contain"
-                />
-              </View>
-              <Text style={styles.socialBtnText}>Continue with Google</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.socialBtn} onPress={() => Alert.alert('Coming soon', 'Sign in with Apple requires capability setup — see README for adding it.')} activeOpacity={0.7}>
-              <View style={styles.socialIconWrap}>
-                <Ionicons name="logo-apple" size={17} color={Colors.foreground} />
-              </View>
-              <Text style={styles.socialBtnText}>Continue with Apple</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.socialBtn} onPress={() => Alert.alert('Coming soon', 'Phone sign-in is not wired up yet.')} activeOpacity={0.7}>
-              <View style={styles.socialIconWrap}>
-                <Ionicons name="call-outline" size={16} color={Colors.foreground} />
-              </View>
-              <Text style={styles.socialBtnText}>Continue with Phone</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>New here? </Text>
-            <Link href="/signup" asChild>
-              <TouchableOpacity>
-                <Text style={styles.footerLink}>Create an account</Text>
-              </TouchableOpacity>
-            </Link>
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </View>
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
-  scroll: {
-    padding: Spacing.xl,
-    paddingBottom: Spacing.xxxl,
+  container: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+  content: {
+    flex: 1,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.xl,
+    paddingTop: Spacing.lg,
+    paddingBottom: Spacing.xl,
     maxWidth: 460,
     width: '100%',
     alignSelf: 'center',
   },
-  logoBlock: { alignItems: 'center', marginTop: Spacing.xxl, marginBottom: Spacing.xxxl },
-  subtitle: { fontSize: 14, color: Colors.mutedForeground, marginTop: 6 },
-  form: { gap: 4 },
-  label: { fontSize: 10, letterSpacing: 1.5, color: Colors.mutedForeground, textTransform: 'uppercase', marginBottom: 6 },
-  input: {
-    backgroundColor: Colors.card, borderRadius: Radii.lg,
-    borderWidth: 1, borderColor: Colors.border,
-    paddingHorizontal: Spacing.lg, paddingVertical: 14,
-    fontSize: 14, color: Colors.foreground,
+  logoBlock: {
+    alignItems: 'center',
+    marginTop: Spacing.md,
   },
-  passwordRow: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: Colors.card, borderRadius: Radii.lg,
-    borderWidth: 1, borderColor: Colors.border,
-    paddingLeft: Spacing.lg,
+  imageContainer: {
+    flex: 1,
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginVertical: Spacing.md,
   },
-  eyeBtn: { padding: 12 },
-  inputBorder: { height: 0 },
-  forgotRow: { alignSelf: 'flex-end', marginTop: 4 },
-  forgotText: { fontSize: 12, color: Colors.accent },
-  errorText: { fontSize: 12, color: Colors.destructive, marginTop: Spacing.md },
-  primaryBtn: {
-    backgroundColor: Colors.primary, borderRadius: Radii.full,
-    paddingVertical: 16, alignItems: 'center', marginTop: Spacing.xl,
+  heroImage: {
+    width: '85%',
+    height: 280,
+    maxHeight: 280,
   },
-  primaryBtnText: { color: Colors.primaryForeground, fontSize: 15, fontWeight: '500' },
-  dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: Spacing.xxl },
-  dividerLine: { flex: 1, height: 1, backgroundColor: Colors.border },
-  dividerText: { fontSize: 12, color: Colors.mutedForeground },
-  socialBtns: { gap: 10 },
-  socialBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9,
-    borderRadius: Radii.full, borderWidth: 1, borderColor: '#E8E2D8',
-    backgroundColor: '#F9F5EF', paddingVertical: 13,
+  bottomSection: {
+    width: '100%',
+    alignItems: 'center',
   },
-  socialIconWrap: {
-    width: 20,
-    height: 20,
+  buttonGroup: {
+    width: '100%',
+    gap: 12,
+    marginBottom: Spacing.xxl,
+  },
+  authBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radii.full,
+    borderWidth: 1,
+    borderColor: '#E8E2D8',
+    paddingVertical: 14,
+    paddingHorizontal: Spacing.lg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  btnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  iconWrap: {
+    width: 24,
+    height: 24,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  socialBtnText: { fontSize: 14, fontWeight: '500', color: Colors.foreground },
-  footer: { flexDirection: 'row', justifyContent: 'center', marginTop: Spacing.xxxl, paddingBottom: Spacing.xl },
-  footerText: { fontSize: 14, color: Colors.mutedForeground },
-  footerLink: { fontSize: 14, color: Colors.accent, fontWeight: '500' },
+  googleIcon: {
+    width: 18,
+    height: 18,
+  },
+  btnText: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: Colors.foreground,
+  },
+  legalBlock: {
+    alignItems: 'center',
+    gap: 2,
+    marginBottom: Spacing.xs,
+  },
+  legalLinksRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+  },
+  legalText: {
+    fontSize: 12,
+    color: Colors.mutedForeground,
+    textAlign: 'center',
+  },
+  legalLink: {
+    fontSize: 12,
+    color: Colors.accent,
+    fontWeight: '500',
+    textDecorationLine: 'underline',
+  },
 });
