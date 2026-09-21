@@ -2,8 +2,8 @@
 
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { auth } from './index'; // needed for logout
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { authApi, clearAuth } from '../services/api';
+import { authApi } from '../services/api';
+import { purgeAllSessionState, initializeUserSession } from '../services/sessionManager';
 
 // Configure Google Sign-In (client ID from GoogleService-Info.plist)
 // In a real app you might pull this from native config; hard‑coded here for simplicity.
@@ -16,14 +16,26 @@ GoogleSignin.configure({
 /** Register with email/password via backend (already implemented in authApi). */
 export const registerWithEmail = async (email: string, password: string, fullName?: string) => {
   const res = await authApi.register(email, password, fullName);
-  // Tokens are persisted inside authApi.register.
+  if (res?.user) {
+    await initializeUserSession({
+      id: res.user.id,
+      email: res.user.email,
+      full_name: res.user.full_name,
+    });
+  }
   return res;
 };
 
 /** Login with email/password via backend. */
 export const loginWithEmail = async (email: string, password: string) => {
   const res = await authApi.login(email, password);
-  // Tokens are persisted inside authApi.login.
+  if (res?.user) {
+    await initializeUserSession({
+      id: res.user.id,
+      email: res.user.email,
+      full_name: res.user.full_name,
+    });
+  }
   return res;
 };
 
@@ -70,13 +82,21 @@ export const loginWithGoogle = async () => {
     }
     console.log("Backend login successful");
 
-    // Build a minimal user-like object for callers that expect it
+    // Build user object from backend response & native sign-in data
     const user = {
-      uid: signInData?.user?.id ?? signInData?.user?.email ?? "google-user",
-      email: signInData?.user?.email ?? null,
-      displayName: signInData?.user?.name ?? null,
+      uid: (response as any)?.user?.id ?? signInData?.user?.id ?? signInData?.user?.email ?? "google-user",
+      email: (response as any)?.user?.email ?? signInData?.user?.email ?? null,
+      displayName: (response as any)?.user?.full_name ?? (response as any)?.user?.displayName ?? signInData?.user?.name ?? null,
       photoURL: signInData?.user?.photo ?? null,
     };
+
+    // Initialize clean session for newly authenticated user immediately
+    await initializeUserSession({
+      id: user.uid,
+      email: user.email,
+      full_name: user.displayName,
+      avatar_uri: user.photoURL,
+    });
 
     console.log("Navigating to Home");
     return user;
@@ -94,15 +114,7 @@ export const logout = async () => {
   try { await GoogleSignin.signOut(); } catch (_) {}
   try { await auth.signOut(); } catch (_) {}
   try { await authApi.logout(); } catch (_) {}
-  await clearAuth();
-  try {
-    await AsyncStorage.multiRemove([
-      'fitme_home_recent_comparisons',
-      'fitme_home_recent_tryons',
-      'fitme_looks_phone_cache_v3',
-      'fitme_saved_photos_cache_v2',
-    ]);
-  } catch (_) {}
+  await purgeAllSessionState();
 };
 
 /** Delete current Firebase user if signed in via client SDK. */

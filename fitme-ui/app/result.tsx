@@ -24,8 +24,10 @@ import {
   LinkComparisonOffer,
   productApi,
   RecommendedProduct,
+  getAuthenticatedUserId,
 } from '../src/services/api';
 import { useLooksStore } from '../src/services/looksStore';
+import { DatabaseManager, LooksRepository } from '../src/repositories';
 import { openAffiliateProductUrl } from '../src/services/affiliate';
 import { shareImageWithText } from 'fitme-extraction';
 
@@ -109,26 +111,116 @@ export default function Result() {
   const resultImageUrls  = useSession((s) => s.resultImageUrls);
   const extractedProduct = useSession((s) => s.extractedProduct);
 
-  // Load real VTON job detail when activeJobId is available
+  // Load real VTON job detail with Local-First SQLite precedence
   useEffect(() => {
     if (!activeJobId) return;
     let isMounted = true;
+    const currentAuthUserId = getAuthenticatedUserId() || DatabaseManager.getActiveUserId();
+
     async function loadJobDetail() {
+      let foundLocally = false;
+
+      // 1. LOCAL-FIRST RESOLUTION: Check Zustand store & SQLite first
       try {
+        // A. In-memory Zustand store (instant synchronous match)
+        const state = useLooksStore.getState();
+        const storeMatch =
+          state.generatedLooks.find((l) => l.id === activeJobId) ||
+          state.savedLooks.find((l) => l.id === activeJobId);
+
+        if (storeMatch && isMounted) {
+          setDetail({
+            id: storeMatch.id,
+            user_id: currentAuthUserId || '',
+            garment_id: storeMatch.garment_id || '',
+            status: storeMatch.status || 'completed',
+            result_image_urls: storeMatch.result_image_urls || [],
+            is_saved: Boolean(storeMatch.is_saved),
+            saved_photo_id: storeMatch.saved_photo_id,
+            saved_photo_name: storeMatch.saved_photo_name,
+            created_at: storeMatch.created_at || new Date().toISOString(),
+            title: storeMatch.title || 'Virtual Look',
+            brand: storeMatch.brand || 'FitMe',
+            platform: storeMatch.platform,
+          });
+          setIsSaved(Boolean(storeMatch.is_saved));
+          setIsLoadingDetail(false);
+          foundLocally = true;
+        }
+
+        // B. Persistent SQLite Database query if not in store
+        if (!foundLocally && currentAuthUserId) {
+          if (!DatabaseManager.isDatabaseOpen()) {
+            try {
+              await DatabaseManager.openUserDatabase(currentAuthUserId);
+            } catch (_) {
+              // Silently bypass if DB cannot be mounted in current state
+            }
+          }
+
+          if (DatabaseManager.isDatabaseOpen()) {
+            const localJob = await LooksRepository.getLookById(activeJobId!);
+            if (localJob && localJob.user_id === currentAuthUserId && isMounted) {
+              setDetail({
+                id: localJob.server_id || localJob.local_id,
+                user_id: localJob.user_id,
+                garment_id: localJob.garment_id,
+                status: localJob.status,
+                result_image_urls:
+                  localJob.result_image_urls && localJob.result_image_urls.length > 0
+                    ? localJob.result_image_urls
+                    : localJob.local_image_paths || [],
+                is_saved: Boolean(localJob.is_saved),
+                saved_photo_id: localJob.saved_photo_id,
+                saved_photo_name: localJob.saved_photo_name,
+                created_at:
+                  typeof localJob.created_at === 'number'
+                    ? new Date(localJob.created_at).toISOString()
+                    : String(localJob.created_at || ''),
+                title: localJob.saved_photo_name
+                  ? `Look with ${localJob.saved_photo_name}`
+                  : 'Virtual Look',
+                brand: localJob.brand_id || 'FitMe',
+              });
+              setIsSaved(Boolean(localJob.is_saved));
+              setIsLoadingDetail(false);
+              foundLocally = true;
+            }
+          }
+        }
+      } catch (localErr) {
+        // Log cleanly to console without triggering React Native Dev LogBox warning toasts
+        console.log('[Result] Local look lookup notice:', localErr);
+      }
+
+      // If no local record exists, show loading indicator while waiting for network
+      if (!foundLocally && isMounted) {
         setIsLoadingDetail(true);
+      }
+
+      // 2. BACKGROUND NETWORK REFRESH: Fetch latest server metadata if connected
+      try {
         const res = await tryOnApi.getDetail(activeJobId!);
         if (isMounted && res) {
-          setDetail(res);
-          setIsSaved(Boolean(res.is_saved));
+          // Account isolation check: ensure active user hasn't switched during transit
+          const activeAfterFetch = getAuthenticatedUserId() || DatabaseManager.getActiveUserId();
+          if (activeAfterFetch === currentAuthUserId) {
+            setDetail(res);
+            setIsSaved(Boolean(res.is_saved));
+          }
         }
-      } catch (err) {
-        console.warn('Could not load try-on job detail:', activeJobId, err);
+      } catch (netErr) {
+        // Offline / disconnected: gracefully preserve local record without error
+        if (!foundLocally) {
+          console.warn('Could not load try-on job detail from network:', activeJobId, netErr);
+        }
       } finally {
         if (isMounted) {
           setIsLoadingDetail(false);
         }
       }
     }
+
     loadJobDetail();
     return () => {
       isMounted = false;

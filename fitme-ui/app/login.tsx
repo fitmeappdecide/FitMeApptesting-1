@@ -9,6 +9,7 @@ import { Logo } from '../src/components/Logo';
 import { Colors, Spacing, Radii } from '../src/constants/theme';
 import { authApi, ApiError } from '../src/services/api';
 import { loginWithGoogle } from '../src/firebase/auth';
+import { initializeUserSession } from '../src/services/sessionManager';
 
 function getSanitizedAuthErrorMessage(e: any): { isCancelled: boolean; message: string } {
   const code = e?.code ? String(e.code) : '';
@@ -92,7 +93,14 @@ export default function Login() {
     setLoading(true);
     setError(null);
     try {
-      await authApi.login(email.trim(), password);
+      const res = await authApi.login(email.trim(), password);
+      if (res?.user) {
+        await initializeUserSession({
+          id: res.user.id,
+          email: res.user.email,
+          full_name: res.user.full_name,
+        });
+      }
       router.replace('/(tabs)/home');
     } catch (e) {
       console.error('[SignIn] Technical error:', e);

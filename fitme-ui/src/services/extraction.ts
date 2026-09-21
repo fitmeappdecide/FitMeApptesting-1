@@ -12,8 +12,9 @@ import { extractProduct as nativeExtractProduct, addExtractionProgressListener, 
 import type { ExtractedProductInput } from './api';
 import { productApi } from './api';
 import { getLocalProductCache, setLocalProductCache, isBlockedOrInvalidTitle } from './productCache';
+import { normalizeProductUrl } from '../utils/url';
 
-export { isBlockedOrInvalidTitle };
+export { isBlockedOrInvalidTitle, normalizeProductUrl };
 
 export interface NormalizedProduct extends Product {
   sourceType: 'url' | 'image_upload';
@@ -53,7 +54,7 @@ export function sanitizeImageUrls(urls: string[] | null | undefined): string[] {
 }
 
 export async function extractProductFromUrl(url: string): Promise<NormalizedProduct> {
-  const trimmed = url.trim();
+  const trimmed = normalizeProductUrl(url);
   if (!/^https?:\/\//i.test(trimmed)) {
     throw new ExtractionError('Please enter a valid product URL (starting with http:// or https://).');
   }
@@ -237,7 +238,8 @@ import { normalizeRetailer } from '../constants/retailers';
 
 /** Best-effort platform name detection, mirrors the native detectPlatform() for display purposes. */
 export function detectPlatformFromUrl(url: string): string {
-  return normalizeRetailer(url).name;
+  const normalized = normalizeProductUrl(url);
+  return normalizeRetailer(normalized || url).name;
 }
 
 export function toExtractedProductInput(product: NormalizedProduct): ExtractedProductInput {

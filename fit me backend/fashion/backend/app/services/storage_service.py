@@ -123,8 +123,65 @@ def retrieve_image_bytes_from_encrypted_ref(encrypted_ref: str) -> bytes:
     return download_user_photo(storage_path)
 
 
+def is_user_uploaded_garment(garment: Any) -> bool:
+    """Conservatively returns True ONLY if the garment is a private user-uploaded garment.
+    Returns False for all retailer/global catalog products, brand products, and ambiguous cases.
+    """
+    if not garment:
+        return False
+
+    # 1. Any brand assignment means it is a B2B brand catalog product
+    if getattr(garment, "brand_id", None) is not None:
+        return False
+
+    # 2. Any real retailer / product URL means it is a shared catalog product
+    p_url = (getattr(garment, "product_url", None) or "").strip().lower()
+    s_url = (getattr(garment, "scraped_from_url", None) or "").strip().lower()
+    if p_url and not p_url.startswith("http://example.com"):
+        return False
+    if s_url and not s_url.startswith("http://example.com"):
+        return False
+
+    # 3. Must have at least one image pointing strictly to Supabase Storage garments/ folder
+    images = getattr(garment, "images", None)
+    if not images or not isinstance(images, list):
+        return False
+
+    has_supabase_garment_storage = False
+    for img in images:
+        raw_url = img.get("url", "") if isinstance(img, dict) else str(img) if img else ""
+        if not raw_url:
+            continue
+        # If image belongs to an external retailer CDN domain, it is a retailer catalog product
+        if any(dom in raw_url.lower() for dom in ("myntassets.com", "media-amazon.com", "ajio.com", "flipkart", "zara", "hm.com")):
+            return False
+        # Check for Supabase storage path in garments/
+        if "/garments/" in raw_url or raw_url.startswith("garments/"):
+            has_supabase_garment_storage = True
+
+    return has_supabase_garment_storage
+
+
+def get_garment_storage_paths(garment: Any) -> list[str]:
+    """Extracts all storage paths/URLs from a garment's images JSON array."""
+    if not garment:
+        return []
+    images = getattr(garment, "images", None)
+    if not images or not isinstance(images, list):
+        return []
+
+    extracted: list[str] = []
+    for img in images:
+        if isinstance(img, dict) and img.get("url"):
+            extracted.append(str(img["url"]).strip())
+        elif isinstance(img, str) and img.strip():
+            extracted.append(img.strip())
+
+    return extracted
+
+
 def delete_images_from_storage(storage_paths_or_urls: list[str]) -> None:
-    """Safely delete tryon output images from Supabase Storage.
+    """Safely delete tryon output images and their companion thumbnails from Supabase Storage.
     Only deletes objects that reside within the configured bucket under tryon_results/
     to prevent any accidental deletion of scans, garments, or user assets.
     """
@@ -133,6 +190,7 @@ def delete_images_from_storage(storage_paths_or_urls: list[str]) -> None:
 
     bucket_name = settings.supabase_storage_bucket
     public_prefix = f"/storage/v1/object/public/{bucket_name}/"
+    sign_prefix = f"/storage/v1/object/sign/{bucket_name}/"
     clean_keys: list[str] = []
 
     for path_or_url in storage_paths_or_urls:
@@ -142,15 +200,28 @@ def delete_images_from_storage(storage_paths_or_urls: list[str]) -> None:
         if path_or_url.startswith("data:"):
             continue
 
-        clean = path_or_url
+        clean = path_or_url.split("?")[0].split("#")[0].strip()
         if public_prefix in clean:
             clean = clean.split(public_prefix, 1)[1]
+        elif sign_prefix in clean:
+            clean = clean.split(sign_prefix, 1)[1]
+        elif "/storage/v1/object/public/" in clean:
+            clean = clean.split("/storage/v1/object/public/", 1)[1]
+            if clean.startswith(f"{bucket_name}/"):
+                clean = clean[len(bucket_name) + 1 :]
         elif clean.startswith(f"{bucket_name}/"):
             clean = clean[len(bucket_name) + 1 :]
 
         # Safety guard: only delete tryon_results objects
-        if clean.startswith("tryon_results/"):
-            clean_keys.append(clean)
+        if clean.startswith("tryon_results/") and not clean.startswith("tryon_results/.."):
+            if clean not in clean_keys:
+                clean_keys.append(clean)
+            # Companion thumbnail auto-inclusion
+            filename = clean[len("tryon_results/") :]
+            if not filename.startswith("thumb_") and (filename.endswith(".webp") or filename.endswith(".jpg") or filename.endswith(".png")):
+                thumb_key = f"tryon_results/thumb_{filename}"
+                if thumb_key not in clean_keys:
+                    clean_keys.append(thumb_key)
 
     if not clean_keys:
         return
@@ -161,6 +232,134 @@ def delete_images_from_storage(storage_paths_or_urls: list[str]) -> None:
         bucket.remove(clean_keys)
     except Exception as exc:
         print(f"Notice: Supabase Storage cleanup warning ({exc})")
+
+
+def delete_storage_objects_batched(storage_paths_or_urls: list[str] | set[str], batch_size: int = 50) -> int:
+    """Safely and efficiently delete a collection of user storage assets in batches.
+    Handles user photos (user_photos/), body scans (scans/), try-on outputs (tryon_results/ + thumbs),
+    and user garments (garments/).
+    
+    Strict safety invariants:
+    - Normalizes URLs, query params, hash fragments, and bucket prefixes.
+    - Automatically includes companion thumbnails for try-on outputs.
+    - Chunks requests into manageable batches (default 50) to prevent request body/header overflow.
+    - Gracefully handles missing files, returning total processed key count.
+    - Zero credentials exposed in error logs.
+    """
+    if not settings.supabase_url or not settings.supabase_service_key or not storage_paths_or_urls:
+        return 0
+
+    bucket_name = settings.supabase_storage_bucket
+    public_prefix = f"/storage/v1/object/public/{bucket_name}/"
+    sign_prefix = f"/storage/v1/object/sign/{bucket_name}/"
+    allowed_prefixes = ("user_photos/", "scans/", "tryon_results/", "garments/")
+    
+    clean_keys: list[str] = []
+
+    for path_or_url in storage_paths_or_urls:
+        if not path_or_url or not isinstance(path_or_url, str) or path_or_url.startswith("data:"):
+            continue
+
+        clean = path_or_url.split("?")[0].split("#")[0].strip()
+        if public_prefix in clean:
+            clean = clean.split(public_prefix, 1)[1]
+        elif sign_prefix in clean:
+            clean = clean.split(sign_prefix, 1)[1]
+        elif "/storage/v1/object/public/" in clean:
+            clean = clean.split("/storage/v1/object/public/", 1)[1]
+            if clean.startswith(f"{bucket_name}/"):
+                clean = clean[len(bucket_name) + 1 :]
+        elif clean.startswith(f"{bucket_name}/"):
+            clean = clean[len(bucket_name) + 1 :]
+
+        # Normalize relative path if it contains subfolder prefixes
+        for prefix in allowed_prefixes:
+            if f"/{prefix}" in clean and not clean.startswith(prefix):
+                clean = prefix + clean.split(f"/{prefix}", 1)[1]
+                break
+
+        # Safety check: must start with an allowed prefix and contain no traversal
+        if any(clean.startswith(p) for p in allowed_prefixes) and not clean.startswith("..") and "/.." not in clean:
+            if clean not in clean_keys:
+                clean_keys.append(clean)
+            
+            # Companion thumbnail auto-inclusion for tryon_results
+            if clean.startswith("tryon_results/"):
+                filename = clean[len("tryon_results/") :]
+                if not filename.startswith("thumb_") and (filename.endswith(".webp") or filename.endswith(".jpg") or filename.endswith(".png")):
+                    thumb_key = f"tryon_results/thumb_{filename}"
+                    if thumb_key not in clean_keys:
+                        clean_keys.append(thumb_key)
+
+    if not clean_keys:
+        return 0
+
+    deleted_count = 0
+    try:
+        client = _get_supabase_client()
+        bucket = client.storage.from_(bucket_name)
+        for i in range(0, len(clean_keys), batch_size):
+            batch = clean_keys[i : i + batch_size]
+            try:
+                bucket.remove(batch)
+                deleted_count += len(batch)
+            except Exception as batch_exc:
+                print(f"Notice: Supabase Storage batch deletion warning for {len(batch)} items: {batch_exc}")
+    except Exception as exc:
+        print(f"Notice: Supabase client initialization error during batch storage removal: {exc}")
+
+    return deleted_count
+
+
+def delete_garment_images_from_storage(storage_paths_or_urls: list[str]) -> None:
+    """Safely delete user-uploaded garment images from Supabase Storage.
+    STRICT SAFETY INVARIANT: Only deletes objects residing within the configured bucket
+    under 'garments/' to prevent any deletion of tryon_results, scans, user_photos,
+    or external retailer assets.
+    """
+    if not settings.supabase_url or not settings.supabase_service_key or not storage_paths_or_urls:
+        return
+
+    bucket_name = settings.supabase_storage_bucket
+    public_prefix = f"/storage/v1/object/public/{bucket_name}/"
+    sign_prefix = f"/storage/v1/object/sign/{bucket_name}/"
+    clean_keys: list[str] = []
+
+    for path_or_url in storage_paths_or_urls:
+        if not path_or_url or not isinstance(path_or_url, str) or path_or_url.startswith("data:"):
+            continue
+
+        clean = path_or_url.split("?")[0].split("#")[0].strip()
+        if public_prefix in clean:
+            clean = clean.split(public_prefix, 1)[1]
+        elif sign_prefix in clean:
+            clean = clean.split(sign_prefix, 1)[1]
+        elif "/storage/v1/object/public/" in clean:
+            clean = clean.split("/storage/v1/object/public/", 1)[1]
+            if clean.startswith(f"{bucket_name}/"):
+                clean = clean[len(bucket_name) + 1 :]
+        elif clean.startswith(f"{bucket_name}/"):
+            clean = clean[len(bucket_name) + 1 :]
+
+        # Normalize relative path if it contains /garments/
+        if "/garments/" in clean and not clean.startswith("garments/"):
+            clean = "garments/" + clean.split("/garments/", 1)[1]
+
+        # Strict safety guard: Only delete objects under garments/ and reject path traversal
+        if clean.startswith("garments/") and not clean.startswith("garments/..") and len(clean) > len("garments/"):
+            if clean not in clean_keys:
+                clean_keys.append(clean)
+
+    if not clean_keys:
+        return
+
+    try:
+        client = _get_supabase_client()
+        bucket = client.storage.from_(bucket_name)
+        bucket.remove(clean_keys)
+    except Exception as exc:
+        print(f"Notice: Supabase garment storage cleanup warning ({exc})")
+
 
 
 def upload_user_photo(image_bytes: bytes, storage_path: str, mime_type: str = "image/jpeg") -> None:

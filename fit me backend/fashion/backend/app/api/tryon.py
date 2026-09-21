@@ -4,7 +4,7 @@ from typing import Any, Literal, Optional
 import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import api_error, get_current_user, get_current_user_or_anonymous
@@ -579,9 +579,12 @@ async def clear_all_history(
     jobs = result.scalars().all()
 
     all_image_urls: list[str] = []
+    garment_ids: set[uuid.UUID] = set()
     for j in jobs:
         if j.result_image_urls and isinstance(j.result_image_urls, list):
             all_image_urls.extend(j.result_image_urls)
+        if j.garment_id:
+            garment_ids.add(j.garment_id)
 
     del_stmt = delete(TryOnJob).where(TryOnJob.user_id == user.id)
     del_res = await db.execute(del_stmt)
@@ -589,6 +592,24 @@ async def clear_all_history(
 
     if all_image_urls:
         storage_service.delete_images_from_storage(all_image_urls)
+
+    # Reference-aware cleanup for user-uploaded garments
+    for gid in garment_ids:
+        try:
+            garment = await db.get(Garment, gid)
+            if garment and storage_service.is_user_uploaded_garment(garment):
+                remaining_count = (await db.execute(
+                    select(func.count(TryOnJob.id)).where(TryOnJob.garment_id == gid)
+                )).scalar() or 0
+
+                if remaining_count == 0:
+                    garment_storage_paths = storage_service.get_garment_storage_paths(garment)
+                    await db.delete(garment)
+                    await db.commit()
+                    if garment_storage_paths:
+                        storage_service.delete_garment_images_from_storage(garment_storage_paths)
+        except Exception as g_err:
+            print(f"Notice: Garment cleanup warning on clear_all_history ({g_err})")
 
     return TryOnDeleteResponse(success=True, deleted=del_res.rowcount or 0)
 
@@ -609,12 +630,31 @@ async def delete_tryon(
     if job is None or str(job.user_id) != str(user.id):
         raise api_error(404, "JOB_NOT_FOUND", "Try-on job was not found.", "ट्राई-ऑन जॉब नहीं मिला।")
 
+    garment_id = job.garment_id
     image_urls = list(job.result_image_urls or [])
     await db.delete(job)
     await db.commit()
 
     if image_urls:
         storage_service.delete_images_from_storage(image_urls)
+
+    # Reference-aware cleanup for user-uploaded garment
+    if garment_id:
+        try:
+            garment = await db.get(Garment, garment_id)
+            if garment and storage_service.is_user_uploaded_garment(garment):
+                other_jobs_count = (await db.execute(
+                    select(func.count(TryOnJob.id)).where(TryOnJob.garment_id == garment_id)
+                )).scalar() or 0
+
+                if other_jobs_count == 0:
+                    garment_storage_paths = storage_service.get_garment_storage_paths(garment)
+                    await db.delete(garment)
+                    await db.commit()
+                    if garment_storage_paths:
+                        storage_service.delete_garment_images_from_storage(garment_storage_paths)
+        except Exception as g_err:
+            print(f"Notice: Garment cleanup warning on delete_tryon ({g_err})")
 
     return TryOnDeleteResponse(success=True, deleted=1)
 

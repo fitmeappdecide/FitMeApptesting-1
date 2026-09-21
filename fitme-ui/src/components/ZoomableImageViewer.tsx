@@ -7,6 +7,12 @@ interface ZoomableImageViewerProps {
   onZoomChange?: (isZoomed: boolean) => void;
 }
 
+const MIN_SCALE = 1.0;
+const MAX_SCALE = 4.5;
+const DOUBLE_TAP_SCALE = 2.5;
+const DOUBLE_TAP_DELAY = 300;
+const DOUBLE_TAP_MAX_DISTANCE = 40;
+
 export function ZoomableImageViewer({ uri, onZoomChange }: ZoomableImageViewerProps) {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
 
@@ -18,12 +24,19 @@ export function ZoomableImageViewer({ uri, onZoomChange }: ZoomableImageViewerPr
   const translateXVal = useRef(0);
   const translateYVal = useRef(0);
 
+  // Gesture state tracking
   const initialDistance = useRef<number | null>(null);
   const initialScale = useRef(1);
-  const lastTouchTime = useRef(0);
+  const initialMidpoint = useRef<{ x: number; y: number } | null>(null);
+  const initialTranslate = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const lastPanX = useRef(0);
   const lastPanY = useRef(0);
+  const touchCount = useRef(0);
+
+  // Double-tap tracking
+  const lastTapTime = useRef(0);
+  const lastTapPos = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     const scaleSub = scale.addListener(({ value }) => {
@@ -44,90 +57,219 @@ export function ZoomableImageViewer({ uri, onZoomChange }: ZoomableImageViewerPr
     };
   }, [scale, translateX, translateY, onZoomChange]);
 
-  const resetZoom = () => {
-    Animated.parallel([
-      Animated.spring(scale, { toValue: 1, useNativeDriver: true }),
-      Animated.spring(translateX, { toValue: 0, useNativeDriver: true }),
-      Animated.spring(translateY, { toValue: 0, useNativeDriver: true }),
-    ]).start();
+  const resetZoom = (animated = true) => {
+    if (animated) {
+      Animated.parallel([
+        Animated.spring(scale, { toValue: 1, useNativeDriver: true, friction: 7, tension: 40 }),
+        Animated.spring(translateX, { toValue: 0, useNativeDriver: true, friction: 7, tension: 40 }),
+        Animated.spring(translateY, { toValue: 0, useNativeDriver: true, friction: 7, tension: 40 }),
+      ]).start();
+    } else {
+      scale.setValue(1);
+      translateX.setValue(0);
+      translateY.setValue(0);
+    }
   };
 
-  const getDistance = (touches: any[]) => {
-    const [t1, t2] = touches;
+  const getDistance = (t1: { pageX: number; pageY: number }, t2: { pageX: number; pageY: number }) => {
     const dx = t1.pageX - t2.pageX;
     const dy = t1.pageY - t2.pageY;
     return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  const getMidpoint = (t1: { pageX: number; pageY: number }, t2: { pageX: number; pageY: number }) => {
+    return {
+      x: (t1.pageX + t2.pageX) / 2,
+      y: (t1.pageY + t2.pageY) / 2,
+    };
+  };
+
+  const clampTranslation = (tx: number, ty: number, currentScale: number) => {
+    const maxTx = Math.max(0, (windowWidth * (currentScale - 1)) / 2);
+    const maxTy = Math.max(0, (windowHeight * (currentScale - 1)) / 2);
+    return {
+      x: Math.min(Math.max(tx, -maxTx), maxTx),
+      y: Math.min(Math.max(ty, -maxTy), maxTy),
+    };
+  };
+
+  const handleDoubleTap = (tapX: number, tapY: number) => {
+    if (scaleVal.current > 1.05) {
+      // If currently zoomed, double-tap returns to fit-to-screen
+      resetZoom(true);
+    } else {
+      // Zoom in centered around the tap location (focal point)
+      const targetScale = DOUBLE_TAP_SCALE;
+      const centerX = windowWidth / 2;
+      const centerY = windowHeight / 2;
+
+      // Focal point translation math:
+      // Point P on image moves to center: Tx = -(targetScale - 1) * (Px - Cx)
+      const targetTx = -(targetScale - 1) * (tapX - centerX);
+      const targetTy = -(targetScale - 1) * (tapY - centerY);
+
+      const clamped = clampTranslation(targetTx, targetTy, targetScale);
+
+      Animated.parallel([
+        Animated.spring(scale, {
+          toValue: targetScale,
+          useNativeDriver: true,
+          friction: 7,
+          tension: 40,
+        }),
+        Animated.spring(translateX, {
+          toValue: clamped.x,
+          useNativeDriver: true,
+          friction: 7,
+          tension: 40,
+        }),
+        Animated.spring(translateY, {
+          toValue: clamped.y,
+          useNativeDriver: true,
+          friction: 7,
+          tension: 40,
+        }),
+      ]).start();
+    }
   };
 
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
+      onPanResponderTerminationRequest: () => false,
 
       onPanResponderGrant: (evt) => {
         const touches = evt.nativeEvent.touches;
+        touchCount.current = touches.length;
+
         if (touches.length === 2) {
-          initialDistance.current = getDistance(touches);
+          // Initialize two-finger pinch
+          const t1 = touches[0];
+          const t2 = touches[1];
+          initialDistance.current = getDistance(t1, t2);
           initialScale.current = scaleVal.current;
+          initialMidpoint.current = getMidpoint(t1, t2);
+          initialTranslate.current = {
+            x: translateXVal.current,
+            y: translateYVal.current,
+          };
         } else if (touches.length === 1) {
           lastPanX.current = translateXVal.current;
           lastPanY.current = translateYVal.current;
 
+          const t = touches[0];
           const now = Date.now();
-          if (now - lastTouchTime.current < 300) {
-            if (scaleVal.current > 1.05) {
-              resetZoom();
-            } else {
-              Animated.parallel([
-                Animated.spring(scale, { toValue: 2.5, useNativeDriver: true }),
-                Animated.spring(translateX, { toValue: 0, useNativeDriver: true }),
-                Animated.spring(translateY, { toValue: 0, useNativeDriver: true }),
-              ]).start();
-            }
+          const prevTime = lastTapTime.current;
+          const prevPos = lastTapPos.current;
+
+          // Check for double-tap gesture
+          if (
+            prevPos &&
+            now - prevTime < DOUBLE_TAP_DELAY &&
+            Math.hypot(t.pageX - prevPos.x, t.pageY - prevPos.y) < DOUBLE_TAP_MAX_DISTANCE
+          ) {
+            handleDoubleTap(t.pageX, t.pageY);
+            lastTapTime.current = 0;
+            lastTapPos.current = null;
+          } else {
+            lastTapTime.current = now;
+            lastTapPos.current = { x: t.pageX, y: t.pageY };
           }
-          lastTouchTime.current = now;
         }
       },
 
       onPanResponderMove: (evt, gestureState) => {
         const touches = evt.nativeEvent.touches;
-        if (touches.length === 2 && initialDistance.current) {
-          const currentDist = getDistance(touches);
-          const newScale = Math.min(
-            Math.max(initialScale.current * (currentDist / initialDistance.current), 1),
-            4.5
-          );
+
+        // Transition from 1 touch to 2 touches during active gesture
+        if (touches.length === 2) {
+          const t1 = touches[0];
+          const t2 = touches[1];
+          const currentDist = getDistance(t1, t2);
+          const currentMid = getMidpoint(t1, t2);
+
+          if (!initialDistance.current || touchCount.current !== 2) {
+            initialDistance.current = currentDist;
+            initialScale.current = scaleVal.current;
+            initialMidpoint.current = currentMid;
+            initialTranslate.current = {
+              x: translateXVal.current,
+              y: translateYVal.current,
+            };
+            touchCount.current = 2;
+            return;
+          }
+
+          const scaleRatio = currentDist / initialDistance.current;
+          const newScale = Math.min(Math.max(initialScale.current * scaleRatio, MIN_SCALE), MAX_SCALE);
           scale.setValue(newScale);
 
-          if (newScale <= 1.05) {
-            translateX.setValue(0);
-            translateY.setValue(0);
+          // Focal-point shift during two-finger pinch
+          const centerX = windowWidth / 2;
+          const centerY = windowHeight / 2;
+          const mid0 = initialMidpoint.current || { x: centerX, y: centerY };
+          const s0 = initialScale.current || 1;
+          const tx0 = initialTranslate.current.x;
+          const ty0 = initialTranslate.current.y;
+
+          const focalTx = (currentMid.x - centerX) - (newScale / s0) * (mid0.x - centerX - tx0);
+          const focalTy = (currentMid.y - centerY) - (newScale / s0) * (mid0.y - centerY - ty0);
+
+          const clamped = clampTranslation(focalTx, focalTy, newScale);
+          translateX.setValue(clamped.x);
+          translateY.setValue(clamped.y);
+        } else if (touches.length === 1) {
+          // Transition from 2 touches back to 1 touch without jumping
+          if (touchCount.current === 2) {
+            lastPanX.current = translateXVal.current;
+            lastPanY.current = translateYVal.current;
+            touchCount.current = 1;
+            initialDistance.current = null;
+            return;
           }
-        } else if (touches.length === 1 && scaleVal.current > 1.05) {
-          const currentScale = scaleVal.current;
-          const maxTx = (windowWidth * (currentScale - 1)) / 2;
-          const maxTy = (windowHeight * (currentScale - 1)) / 2;
 
-          let newTx = lastPanX.current + gestureState.dx;
-          let newTy = lastPanY.current + gestureState.dy;
+          touchCount.current = 1;
 
-          newTx = Math.min(Math.max(newTx, -maxTx), maxTx);
-          newTy = Math.min(Math.max(newTy, -maxTy), maxTy);
+          // Single-finger pan when zoomed in beyond 1.05x
+          if (scaleVal.current > 1.05) {
+            const rawTx = lastPanX.current + gestureState.dx;
+            const rawTy = lastPanY.current + gestureState.dy;
 
-          translateX.setValue(newTx);
-          translateY.setValue(newTy);
+            const clamped = clampTranslation(rawTx, rawTy, scaleVal.current);
+            translateX.setValue(clamped.x);
+            translateY.setValue(clamped.y);
+          }
         }
       },
 
       onPanResponderRelease: () => {
         initialDistance.current = null;
+        initialMidpoint.current = null;
+        touchCount.current = 0;
+
+        // If scale was pinched below 1.05x, snap smoothly back to fit-to-screen
         if (scaleVal.current < 1.05) {
-          resetZoom();
+          resetZoom(true);
+        } else {
+          // Clamp translation smoothly in case of over-drag
+          const clamped = clampTranslation(translateXVal.current, translateYVal.current, scaleVal.current);
+          if (clamped.x !== translateXVal.current || clamped.y !== translateYVal.current) {
+            Animated.parallel([
+              Animated.spring(translateX, { toValue: clamped.x, useNativeDriver: true, friction: 7, tension: 40 }),
+              Animated.spring(translateY, { toValue: clamped.y, useNativeDriver: true, friction: 7, tension: 40 }),
+            ]).start();
+          }
         }
       },
 
       onPanResponderTerminate: () => {
         initialDistance.current = null;
+        initialMidpoint.current = null;
+        touchCount.current = 0;
+        if (scaleVal.current < 1.05) {
+          resetZoom(true);
+        }
       },
     })
   ).current;

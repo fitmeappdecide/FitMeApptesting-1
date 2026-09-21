@@ -47,105 +47,6 @@ function getDisplayBrand(brand?: string | null, title?: string | null): string {
   return brand;
 }
 
-export default function Looks() {
-  const [tab, setTab] = useState<TabType>("Generated");
-  const [selectedPersonPhotoId, setSelectedPersonPhotoId] = useState<string | null>(null);
-  const router = useRouter();
-
-  const {
-    generatedLooks,
-    savedLooks,
-    generatedLoadingMore,
-    savedLoadingMore,
-    loading,
-    refreshing,
-    fetchLooks,
-    fetchNextPage,
-    toggleSave,
-    deleteLook,
-    clearAll,
-  } = useLooksStore();
-
-  const { photos: savedPhotos, fetchPhotos: fetchSavedPhotos } = useSavedPhotosStore();
-
-  useFocusEffect(
-    useCallback(() => {
-      fetchLooks(false);
-      fetchSavedPhotos();
-    }, [fetchLooks, fetchSavedPhotos])
-  );
-
-  const loadingMore = tab === "Saved" ? savedLoadingMore : generatedLoadingMore;
-
-  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
-    // Trigger when user is within 400px of the bottom
-    const isCloseToBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 400;
-    if (isCloseToBottom) {
-      fetchNextPage(tab);
-    }
-  };
-
-  const baseItems = tab === "Saved" ? savedLooks : generatedLooks;
-  const items = selectedPersonPhotoId
-    ? baseItems.filter((item) => item.saved_photo_id === selectedPersonPhotoId)
-    : baseItems;
-
-  const handleToggleSave = async (jobId: string) => {
-    try {
-      await toggleSave(jobId);
-    } catch (err) {
-      console.warn("Could not toggle save on look:", err);
-    }
-  };
-
-  const handlePromptClearAll = () => {
-    Alert.alert(
-      "Clear all try-ons?",
-      "This will remove all of your try-on history. This action cannot be undone.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Clear All",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await clearAll();
-            } catch (err) {
-              console.warn("Could not clear try-on history:", err);
-              Alert.alert("Error", "Could not clear try-on history. Please try again.");
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const handlePromptDeleteIndividual = (jobId: string) => {
-    Alert.alert(
-      "Delete this try-on?",
-      "This will remove this try-on from your history. This action cannot be undone.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await deleteLook(jobId);
-            } catch (err) {
-              console.warn("Could not delete try-on item:", err);
-              Alert.alert("Error", "Could not delete try-on. Please try again.");
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const leftItems = items.filter((_, i) => i % 2 === 0);
-  const rightItems = items.filter((_, i) => i % 2 === 1);
-
 function getTryOnCardImageUri(item: any): string {
   if (!item) return "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=400&q=80";
 
@@ -208,49 +109,159 @@ function getTryOnCardImageUri(item: any): string {
   return "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=400&q=80";
 }
 
-  const LookCard = ({ item, idx }: { item: TryOnHistoryItem; idx: number }) => {
-    const imageUrl = getTryOnCardImageUri(item);
+type LookCardProps = {
+  item: TryOnHistoryItem;
+  idx: number;
+  onToggleSave: (jobId: string) => void;
+  onDeleteIndividual: (jobId: string) => void;
+};
 
-    const displayBrand = getDisplayBrand(item.brand, item.title);
+const LookCard = React.memo(function LookCard({
+  item,
+  idx,
+  onToggleSave,
+  onDeleteIndividual,
+}: LookCardProps) {
+  const imageUrl = getTryOnCardImageUri(item);
+  const displayBrand = getDisplayBrand(item.brand, item.title);
 
-    return (
-      <Link href={{ pathname: "/result", params: { jobId: item.id } } as any} asChild>
-        <TouchableOpacity
-          style={styles.masonryCard}
-          activeOpacity={0.85}
-          onLongPress={() => handlePromptDeleteIndividual(item.id)}
-          delayLongPress={400}
-        >
-          <CachedImage
-            uri={imageUrl}
-            style={[
-              styles.masonryImg,
-              { aspectRatio: 1 / ASPECTS[idx % ASPECTS.length] },
-            ]}
-          />
-          <View style={styles.masonryInfo}>
-            <Text style={styles.masonryTitle} numberOfLines={2}>
-              {item.title || "Virtual Look"}
-            </Text>
-            <View style={styles.masonryMeta}>
-              <Text style={styles.masonryBrand} numberOfLines={1}>{displayBrand}</Text>
-              <TouchableOpacity
-                onPress={() => handleToggleSave(item.id)}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                activeOpacity={0.7}
-              >
-                <Ionicons
-                  name={item.is_saved ? "heart" : "heart-outline"}
-                  size={15}
-                  color={item.is_saved ? Colors.destructive : Colors.accent}
-                />
-              </TouchableOpacity>
-            </View>
+  return (
+    <Link href={{ pathname: "/result", params: { jobId: item.id } } as any} asChild>
+      <TouchableOpacity
+        style={styles.masonryCard}
+        activeOpacity={0.85}
+        onLongPress={() => onDeleteIndividual(item.id)}
+        delayLongPress={400}
+      >
+        <CachedImage
+          uri={imageUrl}
+          style={[
+            styles.masonryImg,
+            { aspectRatio: 1 / ASPECTS[idx % ASPECTS.length] },
+          ]}
+        />
+        <View style={styles.masonryInfo}>
+          <Text style={styles.masonryTitle} numberOfLines={2}>
+            {item.title || "Virtual Look"}
+          </Text>
+          <View style={styles.masonryMeta}>
+            <Text style={styles.masonryBrand} numberOfLines={1}>{displayBrand}</Text>
+            <TouchableOpacity
+              onPress={() => onToggleSave(item.id)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={item.is_saved ? "heart" : "heart-outline"}
+                size={15}
+                color={item.is_saved ? Colors.destructive : Colors.accent}
+              />
+            </TouchableOpacity>
           </View>
-        </TouchableOpacity>
-      </Link>
+        </View>
+      </TouchableOpacity>
+    </Link>
+  );
+});
+
+export default function Looks() {
+  const [tab, setTab] = useState<TabType>("Generated");
+  const [selectedPersonPhotoId, setSelectedPersonPhotoId] = useState<string | null>(null);
+  const router = useRouter();
+
+  const {
+    generatedLooks,
+    savedLooks,
+    generatedLoadingMore,
+    savedLoadingMore,
+    loading,
+    refreshing,
+    fetchLooks,
+    fetchNextPage,
+    toggleSave,
+    deleteLook,
+    clearAll,
+  } = useLooksStore();
+
+  const { photos: savedPhotos, fetchPhotos: fetchSavedPhotos } = useSavedPhotosStore();
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchLooks(false);
+      fetchSavedPhotos();
+    }, [fetchLooks, fetchSavedPhotos])
+  );
+
+  const loadingMore = tab === "Saved" ? savedLoadingMore : generatedLoadingMore;
+
+  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    // Trigger when user is within 400px of the bottom
+    const isCloseToBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 400;
+    if (isCloseToBottom) {
+      fetchNextPage(tab);
+    }
+  };
+
+  const baseItems = tab === "Saved" ? savedLooks : generatedLooks;
+  const items = selectedPersonPhotoId
+    ? baseItems.filter((item) => item.saved_photo_id === selectedPersonPhotoId)
+    : baseItems;
+
+  const handleToggleSave = useCallback(async (jobId: string) => {
+    try {
+      await toggleSave(jobId);
+    } catch (err) {
+      console.warn("Could not toggle save on look:", err);
+    }
+  }, [toggleSave]);
+
+  const handlePromptClearAll = () => {
+    Alert.alert(
+      "Clear all try-ons?",
+      "This will remove all of your try-on history. This action cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear All",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await clearAll();
+            } catch (err) {
+              console.warn("Could not clear try-on history:", err);
+              Alert.alert("Error", "Could not clear try-on history. Please try again.");
+            }
+          },
+        },
+      ]
     );
   };
+
+  const handlePromptDeleteIndividual = useCallback((jobId: string) => {
+    Alert.alert(
+      "Delete this try-on?",
+      "This will remove this try-on from your history. This action cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await deleteLook(jobId);
+            } catch (err) {
+              console.warn("Could not delete try-on item:", err);
+              Alert.alert("Error", "Could not delete try-on. Please try again.");
+            }
+          },
+        },
+      ]
+    );
+  }, [deleteLook]);
+
+  const leftItems = items.filter((_, i) => i % 2 === 0);
+  const rightItems = items.filter((_, i) => i % 2 === 1);
 
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
@@ -358,7 +369,7 @@ function getTryOnCardImageUri(item: any): string {
           </ScrollView>
         )}
 
-        {loading && !refreshing ? (
+        {loading && items.length === 0 ? (
           <View style={styles.loadingBox}>
             <ActivityIndicator size="large" color="#A86248" />
           </View>
@@ -398,12 +409,24 @@ function getTryOnCardImageUri(item: any): string {
           <View style={styles.masonry}>
             <View style={styles.col}>
               {leftItems.map((item, i) => (
-                <LookCard key={item.id} item={item} idx={i * 2} />
+                <LookCard
+                  key={item.id}
+                  item={item}
+                  idx={i * 2}
+                  onToggleSave={handleToggleSave}
+                  onDeleteIndividual={handlePromptDeleteIndividual}
+                />
               ))}
             </View>
             <View style={styles.col}>
               {rightItems.map((item, i) => (
-                <LookCard key={item.id} item={item} idx={i * 2 + 1} />
+                <LookCard
+                  key={item.id}
+                  item={item}
+                  idx={i * 2 + 1}
+                  onToggleSave={handleToggleSave}
+                  onDeleteIndividual={handlePromptDeleteIndividual}
+                />
               ))}
             </View>
           </View>

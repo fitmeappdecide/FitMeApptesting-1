@@ -4,7 +4,10 @@ from httpx import ASGITransport, AsyncClient
 from app.main import app
 from app.api.deps import get_current_user
 import app.core.database as core_db
-from tests.conftest import TestAsyncSessionLocal, test_engine
+import os
+import sys
+sys.path.insert(0, os.path.dirname(__file__))
+from conftest import TestAsyncSessionLocal, test_engine
 from app.core.database import Base
 from app.models.user import User
 from app.models.ava import AVAConversation, AVAMessage

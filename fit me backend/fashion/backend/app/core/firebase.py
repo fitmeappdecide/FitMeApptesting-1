@@ -17,7 +17,17 @@ def init_firebase():
             except Exception as e:
                 logger.warning(f"Failed writing GCP key from environment: {e}")
 
-        cred_path = gcp_key if os.path.exists(gcp_key) else settings.firebase_credentials_path
+        cred_path = None
+        if os.path.exists(gcp_key):
+            cred_path = gcp_key
+        elif settings.firebase_credentials_path:
+            clean_rel = settings.firebase_credentials_path.lstrip("./")
+            rel_to_backend = os.path.join(backend_dir, clean_rel)
+            if os.path.exists(rel_to_backend):
+                cred_path = rel_to_backend
+            elif os.path.exists(settings.firebase_credentials_path):
+                cred_path = os.path.abspath(settings.firebase_credentials_path)
+
         if cred_path and os.path.exists(cred_path):
             try:
                 cred = credentials.Certificate(cred_path)

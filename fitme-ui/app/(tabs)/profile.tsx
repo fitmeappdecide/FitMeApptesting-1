@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  Modal, Linking, Alert, Platform, Image,
+  Modal, Linking, Alert, Platform, Image, ActivityIndicator,
 } from 'react-native';
 import { useRouter, Link, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,6 +14,7 @@ import { ProMemberBadge } from '../../src/components/ProMemberBadge';
 import * as ImagePicker from 'expo-image-picker';
 import { userApi } from '../../src/services/api';
 import { logout, deleteCurrentUserFromFirebase } from '../../src/firebase/auth';
+import { purgeAllSessionState } from '../../src/services/sessionManager';
 import { auth } from '../../src/firebase';
 
 
@@ -69,31 +70,20 @@ function MenuRow({
 
 export default function Profile() {
   const router = useRouter();
-  const { isPremium, profile, setProfile, clearProfile, fetchProfile } = useUserStore();
+  const { isPremium, profile, setProfile, fetchProfile } = useUserStore();
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
-
-  const firebaseUser = auth?.currentUser;
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
-      // 1. Non-destructively merge Firebase auth fields if present and store has not yet populated them
-      if (firebaseUser && (!profile?.full_name || !profile?.email || !profile?.avatar_uri)) {
-        setProfile({
-          full_name: profile?.full_name || firebaseUser.displayName || null,
-          email: profile?.email || firebaseUser.email || null,
-          avatar_uri: profile?.avatar_uri || firebaseUser.photoURL || null,
-        });
-      }
-
-      // 2. Refresh profile details in background using store's deduplicated & TTL-governed fetchProfile
+      // Refresh profile details in background using store's deduplicated & user-scoped fetchProfile
       fetchProfile(false).catch(() => {});
-    }, [firebaseUser, profile, setProfile, fetchProfile])
+    }, [fetchProfile])
   );
 
   const handleLogout = async () => {
     setLogoutOpen(false);
-    clearProfile();
     try {
       await logout();
     } finally {
@@ -127,57 +117,26 @@ export default function Profile() {
     setProfile({ avatar_uri: null });
   };
 
-  /* Contact Support ──────────────────────────────── */
-  const handleSupport = async () => {
-    // TODO: Read version and build from expo-constants in production
-    const version = '1.0.4';
-    const build   = '98';
-    const os      = Platform.OS === 'ios' ? 'iOS' : 'Android';
-    const sub     = isPremium ? 'Premium' : 'Free';
-    // TODO: Replace with real user ID and email from auth session
-    const userId  = 'USR-0000000';
-    const email   = 'user@fitme.app';
-
-    const body = [
-      'Hi FitMe Support,',
-      '',
-      'I need help with:',
-      '',
-      '[Please describe your issue here]',
-      '',
-      '',
-      '--------------------------',
-      'Please do not edit below this line',
-      '',
-      `App Version:  ${version}`,
-      `Build:        ${build}`,
-      `Platform:     ${os}`,
-      `User ID:      ${userId}`,
-      `Account:      ${email}`,
-      `Subscription: ${sub}`,
-    ].join('\n');
-
-    const url = `mailto:support@fitme.app?subject=${encodeURIComponent('FitMe Support Request')}&body=${encodeURIComponent(body)}`;
-    try {
-      const canOpen = await Linking.canOpenURL(url);
-      if (canOpen) {
-        await Linking.openURL(url);
-      } else {
-        // Fallback: device has no mail client configured
-        router.push('/contact-support');
-      }
-    } catch {
-      router.push('/contact-support');
-    }
+  /* Menu Handlers ─────────────────────────────────── */
+  const handleSupport = () => {
+    Linking.openURL('mailto:support@fitmeapp.com?subject=Support%20Request').catch(() =>
+      Alert.alert('Error', 'Unable to open email client.'),
+    );
   };
 
-  /* External links ───────────────────────────────── */
-  const handlePrivacy = () => Linking.openURL('https://fitme.app/privacy');
-  const handleTerms   = () => Linking.openURL('https://fitme.app/terms');
+  const handlePrivacy = () => {
+    Linking.openURL('https://fitmeapp.com/privacy').catch(() =>
+      Alert.alert('Error', 'Unable to open privacy policy.'),
+    );
+  };
 
-  /* Rate ─────────────────────────────────────────── */
-  const handleRate = async () => {
-    // TODO: Replace with real App Store / Play Store IDs before launch
+  const handleTerms = () => {
+    Linking.openURL('https://fitmeapp.com/terms').catch(() =>
+      Alert.alert('Error', 'Unable to open terms of service.'),
+    );
+  };
+
+  const handleRate = () => {
     const storeUrl = Platform.OS === 'ios'
       ? 'https://apps.apple.com/app/id0000000000'
       : 'market://details?id=app.fitme.app';
@@ -188,6 +147,7 @@ export default function Profile() {
 
   /* Delete Account ───────────────────────────────── */
   const handleDeleteAccount = () => {
+    if (isDeleting) return;
     Alert.alert(
       'Delete Account',
       'This will permanently delete your account, photos, saved try-ons, and subscription history. This cannot be undone.',
@@ -206,16 +166,18 @@ export default function Profile() {
                   text: 'Delete My Account',
                   style: 'destructive',
                   onPress: async () => {
+                    setIsDeleting(true);
                     try {
                       await userApi.deleteAccount();
                       await deleteCurrentUserFromFirebase();
-                      await logout();
+                      await purgeAllSessionState({ deleteLocalDatabase: true });
                       Alert.alert('Account Deleted', 'Your account and personal data have been permanently deleted.', [
-
                         { text: 'OK', onPress: () => router.replace('/login') },
                       ]);
                     } catch (e: any) {
                       Alert.alert('Error', e?.message || 'Could not delete account. Please try again.');
+                    } finally {
+                      setIsDeleting(false);
                     }
                   },
                 },
@@ -226,16 +188,13 @@ export default function Profile() {
     );
   };
 
-  /* ─── Render ────────────────────────────────────── */
-
   const displayName =
     profile?.full_name ||
-    firebaseUser?.displayName ||
-    (profile?.email ? profile.email.split('@')[0] : firebaseUser?.email ? firebaseUser.email.split('@')[0] : 'FitMe User');
+    (profile?.email ? profile.email.split('@')[0] : 'FitMe User');
 
-  const displayEmail = profile?.email || firebaseUser?.email || '';
+  const displayEmail = profile?.email || '';
   const initials = (displayName.trim().charAt(0) || 'U').toUpperCase();
-  const avatarUri = profile?.avatar_uri || firebaseUser?.photoURL || null;
+  const avatarUri = profile?.avatar_uri || null;
   const tryOnCount = profile?.try_on_count ?? 0;
   const savedCount = profile?.saved_count ?? 0;
 
@@ -346,17 +305,26 @@ export default function Profile() {
         <Text style={styles.sectionTitle}>Danger Zone</Text>
         <View style={styles.dangerCard}>
           <TouchableOpacity
-            style={styles.deleteRow}
+            style={[styles.deleteRow, isDeleting && { opacity: 0.6 }]}
             onPress={handleDeleteAccount}
+            disabled={isDeleting}
             activeOpacity={0.7}
             accessibilityLabel="Delete Account"
             accessibilityRole="button"
           >
             <View style={styles.deleteIconWrap}>
-              <Ionicons name="trash-outline" size={17} color={Colors.destructive} />
+              {isDeleting ? (
+                <ActivityIndicator size="small" color={Colors.destructive} />
+              ) : (
+                <Ionicons name="trash-outline" size={17} color={Colors.destructive} />
+              )}
             </View>
-            <Text style={styles.deleteLabel}>Delete Account</Text>
-            <Ionicons name="chevron-forward" size={15} color={Colors.mutedForeground} />
+            <Text style={styles.deleteLabel}>
+              {isDeleting ? 'Deleting Account...' : 'Delete Account'}
+            </Text>
+            {!isDeleting && (
+              <Ionicons name="chevron-forward" size={15} color={Colors.mutedForeground} />
+            )}
           </TouchableOpacity>
         </View>
 

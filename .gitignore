@@ -17,3 +17,5 @@ fitme_dev.db
 *.db
 scratch/
 .pytest_cache/
+fitme-ui/test_*.js
+

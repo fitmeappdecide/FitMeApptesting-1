@@ -4,7 +4,10 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.core import database as core_db
-from tests.conftest import TestAsyncSessionLocal
+import os
+import sys
+sys.path.insert(0, os.path.dirname(__file__))
+from conftest import TestAsyncSessionLocal
 from app.api.deps import get_current_user
 from app.main import app
 from app.models.tryon_job import TryOnJob

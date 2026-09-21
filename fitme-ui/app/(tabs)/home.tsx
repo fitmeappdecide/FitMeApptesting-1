@@ -19,6 +19,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CachedImage } from '../../src/components/CachedImage';
 import { productIntelligenceApi, PIHistoryItem, tryOnApi, TryOnHistoryItem } from '../../src/services/api';
 import { useLooksStore } from '../../src/services/looksStore';
+import { normalizeProductUrl } from '../../src/utils/url';
 
 function getComparisonImageUri(item: PIHistoryItem): string {
   if (!item) return 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80';
@@ -273,7 +274,12 @@ export default function Home() {
   );
 
   const handleUrlChange = (text: string) => {
-    setUrl(text);
+    const normalized = normalizeProductUrl(text);
+    // If pasting formatted text (e.g. Markdown link or text with URL), normalize in input field immediately
+    const nextVal = (text.includes('[http') || (text.includes('http') && !text.trim().startsWith('http')))
+      ? normalized
+      : text;
+    setUrl(nextVal);
     if (inlineMsg) {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
       fadeAnim.setValue(0);
@@ -282,14 +288,14 @@ export default function Home() {
   };
 
   const handleTryOn = () => {
-    const trimmed = url.trim();
-    if (!trimmed) {
+    const normalized = normalizeProductUrl(url);
+    if (!normalized || !/^https?:\/\//i.test(normalized)) {
       showMessage('Please paste a product link to continue.');
       return;
     }
     setExtractedProduct(null);
     setProductImageUri(null);
-    setSourceUrl(trimmed);
+    setSourceUrl(normalized);
     router.push('/import');
   };
 

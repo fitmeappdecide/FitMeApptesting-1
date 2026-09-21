@@ -139,13 +139,27 @@ async function performTokenRefresh(): Promise<string> {
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       let response: Response;
+      const currentBaseUrl = getBaseUrl();
       try {
-        response = await fetch(`${BASE_URL}/api/v1/auth/refresh`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refresh_token: refreshToken }),
-          signal: controller.signal,
-        });
+        try {
+          response = await fetch(`${currentBaseUrl}/api/v1/auth/refresh`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh_token: refreshToken }),
+            signal: controller.signal,
+          });
+        } catch (networkErr) {
+          if (currentBaseUrl !== PRODUCTION_API_URL && !controller.signal.aborted) {
+            response = await fetch(`${PRODUCTION_API_URL}/api/v1/auth/refresh`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ refresh_token: refreshToken }),
+              signal: controller.signal,
+            });
+          } else {
+            throw networkErr;
+          }
+        }
       } finally {
         clearTimeout(timeoutId);
       }
@@ -198,9 +212,36 @@ async function getValidAccessToken(): Promise<string | null> {
   return accessToken;
 }
 
+let sessionEpoch = 0;
+
+export function getSessionEpoch(): number {
+  return sessionEpoch;
+}
+
+export function incrementSessionEpoch(): number {
+  sessionEpoch += 1;
+  return sessionEpoch;
+}
+
+export function getAuthenticatedUserId(): string | null {
+  if (!accessToken) return null;
+  try {
+    const parts = accessToken.split('.');
+    if (parts.length < 2) return null;
+    let base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    while (base64.length % 4) base64 += '=';
+    const decoded = typeof atob === 'function' ? atob(base64) : Buffer.from(base64, 'base64').toString('binary');
+    const parsed = JSON.parse(decoded);
+    return parsed.sub ? String(parsed.sub) : null;
+  } catch {
+    return null;
+  }
+}
+
 async function persistAuth(access: string, refresh: string) {
   accessToken = access;
   refreshToken = refresh;
+  incrementSessionEpoch();
   await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, access);
   await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refresh);
 }
@@ -209,6 +250,7 @@ export async function clearAuth() {
   accessToken = null;
   refreshToken = null;
   refreshPromise = null;
+  incrementSessionEpoch();
   await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
   await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
 }
@@ -241,11 +283,24 @@ export async function request<T>(endpoint: string, options: RequestOptions = {},
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     };
-    response = await fetch(`${currentBaseUrl}${endpoint}`, {
-      ...options,
-      headers: finalHeaders,
-      signal: controller.signal,
-    });
+    try {
+      response = await fetch(`${currentBaseUrl}${endpoint}`, {
+        ...options,
+        headers: finalHeaders,
+        signal: controller.signal,
+      });
+    } catch (networkErr: any) {
+      if (currentBaseUrl !== PRODUCTION_API_URL && !controller.signal.aborted) {
+        console.warn(`[Network Failover] Local server (${currentBaseUrl}) unreachable, retrying against production Railway: ${PRODUCTION_API_URL}${endpoint}`);
+        response = await fetch(`${PRODUCTION_API_URL}${endpoint}`, {
+          ...options,
+          headers: finalHeaders,
+          signal: controller.signal,
+        });
+      } else {
+        throw networkErr;
+      }
+    }
   } catch (err: any) {
     if (err?.name === 'AbortError') {
       console.log(`[Network Timeout/Abort] ${endpoint}`);
@@ -729,7 +784,7 @@ export const userApi = {
   getProfile: () => request<Record<string, unknown>>('/api/v1/user/profile'),
   updateProfile: (data: Record<string, unknown>) =>
     request<UserPublic>('/api/v1/user/profile', { method: 'PUT', body: JSON.stringify(data) }),
-  deleteAccount: () => request('/api/v1/user/account', { method: 'DELETE' }),
+  deleteAccount: () => request('/api/v1/user/account', { method: 'DELETE', timeoutMs: 120_000 }),
 };
 
 // ─── HEALTH ───────────────────────────────────────────────────────────

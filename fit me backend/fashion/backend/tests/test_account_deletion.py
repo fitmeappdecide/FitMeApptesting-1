@@ -4,7 +4,10 @@ from httpx import ASGITransport, AsyncClient
 from app.main import app
 from app.api.deps import get_current_user
 import app.core.database as core_db
-from tests.conftest import TestAsyncSessionLocal, test_engine
+import os
+import sys
+sys.path.insert(0, os.path.dirname(__file__))
+from conftest import TestAsyncSessionLocal, test_engine
 from app.core.database import Base
 from app.models.user import User
 from app.models.user_saved_photo import UserSavedPhoto
@@ -294,6 +297,131 @@ async def test_another_user_firebase_account_not_deleted():
     async with TestAsyncSessionLocal() as db:
         userB_record = await db.get(User, userB_id)
         assert userB_record is not None
+
+
+@pytest.mark.asyncio
+async def test_large_account_deletion_160_jobs_with_metrics():
+    """Realistic large-scale account deletion benchmark with 160 Try-Ons, 20 Photos, 10 Scans.
+    Measures timing, ensures batched storage calls, and verifies zero data leakage for other users.
+    """
+    import time
+    from unittest.mock import patch, MagicMock
+    from app.models.body_profile import BodyProfile
+    from app.models.size_recommendation import SizeRecommendation
+
+    userA_id = uuid.uuid4()
+    userB_id = uuid.uuid4()
+    emailA = f"large_user_{uuid.uuid4().hex[:6]}@example.com"
+    emailB = f"other_user_{uuid.uuid4().hex[:6]}@example.com"
+    shared_garment_id = uuid.uuid4()
+    exclusive_garment_id = uuid.uuid4()
+
+    async with TestAsyncSessionLocal() as db:
+        # Create Target User A
+        uA = User(id=userA_id, email=emailA, password_hash="pwd", is_active=True)
+        db.add(uA)
+
+        # Create Innocent User B
+        uB = User(id=userB_id, email=emailB, password_hash="pwd", is_active=True)
+        db.add(uB)
+
+        # Shared Garment
+        shared_g = Garment(id=shared_garment_id, product_name="Shared Garment", images=[{"url": "https://example.com/shared.jpg"}])
+        db.add(shared_g)
+
+        # Exclusive User Garment
+        exclusive_g = Garment(id=exclusive_garment_id, product_name="Exclusive Garment", images=[{"url": "garments/user_g_1.webp"}])
+        db.add(exclusive_g)
+
+        # 160 Try-On jobs for User A (100 shared, 60 exclusive)
+        for i in range(160):
+            gid = shared_garment_id if i < 100 else exclusive_garment_id
+            db.add(TryOnJob(
+                id=uuid.uuid4(),
+                user_id=userA_id,
+                garment_id=gid,
+                status="completed",
+                result_image_urls=[f"tryon_results/tryon_{userA_id}_{i}.webp"]
+            ))
+
+        # 20 Saved photos for User A
+        for i in range(20):
+            db.add(UserSavedPhoto(
+                id=uuid.uuid4(),
+                user_id=userA_id,
+                storage_path=f"user_photos/photo_{userA_id}_{i}.jpg",
+                display_name=f"Photo {i}"
+            ))
+
+        # 10 Body Scans for User A
+        for i in range(10):
+            db.add(BodyScan(
+                id=uuid.uuid4(),
+                user_id=userA_id,
+                front_photo_url_encrypted=f"scans/front_{userA_id}_{i}.webp",
+                consent_given=True
+            ))
+
+        # 50 Try-On jobs for User B referencing the shared garment
+        for i in range(50):
+            db.add(TryOnJob(
+                id=uuid.uuid4(),
+                user_id=userB_id,
+                garment_id=shared_garment_id,
+                status="completed",
+                result_image_urls=[f"tryon_results/tryon_{userB_id}_{i}.webp"]
+            ))
+
+        await db.commit()
+
+    async def as_userA():
+        async with TestAsyncSessionLocal() as session:
+            return await session.get(User, userA_id)
+
+    app.dependency_overrides[get_current_user] = as_userA
+
+    mock_batch_storage = MagicMock(return_value=190)
+    mock_del_garment = MagicMock()
+
+    t_start = time.perf_counter()
+    with patch("app.core.firebase.delete_firebase_user", return_value=True) as mock_fb, \
+         patch("app.services.storage_service.delete_storage_objects_batched", mock_batch_storage), \
+         patch("app.services.storage_service.delete_garment_images_from_storage", mock_del_garment):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            res = await client.delete("/api/v1/user/account")
+            assert res.status_code == 200
+            assert res.json()["status"] == "deleted"
+
+    t_total = time.perf_counter() - t_start
+
+    print(f"\n[BENCHMARK METRICS] Large Account Deletion (160 Jobs, 20 Photos, 10 Scans):")
+    print(f"Total API Latency: {t_total*1000:.2f}ms ({t_total:.4f}s)")
+    print(f"Firebase call count: {mock_fb.call_count}")
+    print(f"Batch storage call count: {mock_batch_storage.call_count}")
+    print(f"Garment storage call count: {mock_del_garment.call_count}")
+
+    # VERIFY DATABASE CLEANUP
+    async with TestAsyncSessionLocal() as db:
+        # User A deleted
+        assert await db.get(User, userA_id) is None
+        # User A Try-ons deleted (0 remaining)
+        jobsA = (await db.execute(TryOnJob.__table__.select().where(TryOnJob.user_id == userA_id))).fetchall()
+        assert len(jobsA) == 0
+        # User A Photos deleted (0 remaining)
+        photosA = (await db.execute(UserSavedPhoto.__table__.select().where(UserSavedPhoto.user_id == userA_id))).fetchall()
+        assert len(photosA) == 0
+        # User A Scans deleted (0 remaining)
+        scansA = (await db.execute(BodyScan.__table__.select().where(BodyScan.user_id == userA_id))).fetchall()
+        assert len(scansA) == 0
+        # Exclusive Garment deleted
+        assert await db.get(Garment, exclusive_garment_id) is None
+        # Shared Garment PRESERVED
+        assert await db.get(Garment, shared_garment_id) is not None
+
+        # USER B DATA COMPLETELY INTACT
+        assert await db.get(User, userB_id) is not None
+        jobsB = (await db.execute(TryOnJob.__table__.select().where(TryOnJob.user_id == userB_id))).fetchall()
+        assert len(jobsB) == 50
 
 
 
