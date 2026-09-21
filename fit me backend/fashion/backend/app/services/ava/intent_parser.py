@@ -1,14 +1,11 @@
 """
-AVA Intent Parser — Multi-Tier Natural Language Understanding.
-Tier 1: Gemini 2.5 Flash / Google GenAI LLM Semantic Parser (when Vertex/Gemini credentials available)
-Tier 2: High-Precision Deterministic Regex & Keyword Parser (Fallback)
+AVA Intent Parser — High-Precision Deterministic Natural Language Understanding.
+Fast deterministic regex & keyword parser with zero cloud latency and zero external LLM dependencies.
 """
 import json
 import logging
 import re
 from typing import Any, Dict, List, Optional
-
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -16,65 +13,9 @@ logger = logging.getLogger(__name__)
 class AVAIntentParser:
     @staticmethod
     def parse(user_prompt: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        # Fast deterministic NLU parsing (1ms latency)
+        # Fast deterministic NLU parsing (<1ms latency)
         parsed = AVAIntentParser._parse_deterministic(user_prompt, context)
         return parsed
-
-    @staticmethod
-    def _parse_with_gemini(user_prompt: str) -> Optional[Dict[str, Any]]:
-        try:
-            from google import genai
-            from google.genai import types
-
-            client = genai.Client(
-                project=settings.vertex_project_id,
-                location=settings.vertex_location,
-                enterprise=True,
-            )
-
-            system_prompt = (
-                "You are an expert NLU intent parser for AVA, FitMe's AI Fashion Agent.\n"
-                "Analyze the user prompt and extract fashion intent, occasion, budget, platform constraints, style, and color.\n"
-                "Respond strictly in valid JSON matching this schema:\n"
-                "{\n"
-                '  "intent": "outfit_recommendation" | "tryon_history" | "style_recent_tryon" | "fashion_advice" | "make_cheaper" | "swap_item" | "price_comparison" | "try_on" | "complete_look" | "save_outfit" | "product_search",\n'
-                '  "mode": "Stylist" | "Shopping Stylist" | "Shopping Action Agent",\n'
-                '  "occasion": "college" | "wedding" | "mehendi" | "sangeet" | "office" | "interview" | "party" | "date" | "travel" | "ethnic" | "casual",\n'
-                '  "style": "casual" | "minimal" | "streetwear" | "formal" | "ethnic" | "smart casual",\n'
-                '  "platform": "myntra" | "ajio" | "amazon" | "flipkart" | null,\n'
-                '  "budget": number | null,\n'
-                '  "currency": "INR",\n'
-                '  "color": string | null,\n'
-                '  "gender": "women" | "men" | null,\n'
-                '  "swap_target": string | null,\n'
-                '  "target_outfit_index": number | null,\n'
-                '  "needs_products": boolean,\n'
-                '  "needs_price_comparison": boolean,\n'
-                '  "needs_tryon": boolean\n'
-                "}"
-            )
-
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=[system_prompt, f"User Prompt: '{user_prompt}'"],
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.1,
-                ),
-            )
-
-            text = response.text or ""
-            if text.startswith("```json"):
-                text = text[7:-3]
-            elif text.startswith("```"):
-                text = text[3:-3]
-
-            data = json.loads(text.strip())
-            data["raw_prompt"] = user_prompt
-            return data
-        except Exception as e:
-            logger.debug(f"[AVAIntentParser] Gemini error: {e}")
-            return None
 
     @staticmethod
     def _parse_deterministic(user_prompt: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -217,8 +158,13 @@ class AVAIntentParser:
                     break
 
         elif (
-            any(k in text for k in ["try this on me", "try on me", "virtual try on", "try it on me", "wear this on me", "try this outfit", "try the first outfit", "try on this", "try outfit on"])
-            or (re.search(r'\btry\s+(?:this|it|outfit|first|on\s+me)\b', text) and not any(k in text for k in ["history", "recent", "past", "last", "latest"]))
+            any(k in text for k in [
+                "try this on me", "try on me", "virtual try on", "try it on me", "wear this on me",
+                "try this outfit", "try the first outfit", "try the second outfit", "try the third outfit",
+                "try on this", "try outfit on", "try it on", "try this on", "try it",
+            ])
+            or (re.search(r'\btry\s+(?:the\s+)?(?:first|second|third|this|it|outfit|on\s+me)\b', text) and not any(k in text for k in ["history", "recent", "past", "last", "latest"]))
+            or (text.startswith("try ") and not any(k in text for k in ["history", "recent", "past", "last", "latest"]))
         ):
             intent = "try_on"
             needs_tryon = True

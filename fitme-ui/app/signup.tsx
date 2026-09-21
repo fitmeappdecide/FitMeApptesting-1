@@ -8,6 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logo } from '../src/components/Logo';
 import { Colors, Spacing, Radii } from '../src/constants/theme';
 import { authApi, ApiError } from '../src/services/api';
+import { initializeUserSession, purgeAllSessionState } from '../src/services/sessionManager';
 
 const fields = [
   { label: 'NAME', key: 'name', placeholder: 'Your name', type: 'default' },
@@ -32,9 +33,19 @@ export default function Signup() {
     try {
       // Note: the backend's /auth/register only accepts email, password, full_name —
       // phone isn't part of the current schema, so it's collected here but not sent yet.
-      await authApi.register(vals.email.trim(), vals.password, vals.name.trim() || undefined);
+      const res = await authApi.register(vals.email.trim(), vals.password, vals.name.trim() || undefined);
+      if (res?.user) {
+        await initializeUserSession({
+          id: res.user.id,
+          email: res.user.email,
+          full_name: res.user.full_name,
+        });
+      }
       router.replace('/(tabs)/home');
     } catch (e) {
+      try {
+        await purgeAllSessionState();
+      } catch (_) {}
       setError(e instanceof ApiError ? e.message : 'Could not create your account. Check your connection and try again.');
     } finally {
       setLoading(false);

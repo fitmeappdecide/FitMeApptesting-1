@@ -1,6 +1,6 @@
 import os
 import uuid
-from typing import Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from supabase import create_client, Client as SupabaseClient
 

@@ -4,7 +4,8 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logo } from '../src/components/Logo';
 import { Colors, Spacing } from '../src/constants/theme';
-import { loadStoredAuth } from '../src/services/api';
+import { loadStoredAuth, getAuthenticatedUserId } from '../src/services/api';
+import { initializeUserSession } from '../src/services/sessionManager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function SplashScreen() {
@@ -13,9 +14,6 @@ export default function SplashScreen() {
   const loaderAnim = useRef(new Animated.Value(-1)).current;
 
   useEffect(() => {
-    // Immediately preload auth tokens into memory so downstream components have credentials ready
-    loadStoredAuth().catch(() => {});
-
     Animated.loop(
       Animated.timing(loaderAnim, {
         toValue: 3,
@@ -31,10 +29,20 @@ export default function SplashScreen() {
           router.replace('/onboarding');
           return;
         }
+
+        const isAuthenticated = await loadStoredAuth();
+        if (isAuthenticated) {
+          const userId = getAuthenticatedUserId();
+          if (userId) {
+            await initializeUserSession({ id: userId });
+          }
+          router.replace('/(tabs)/home');
+          return;
+        }
       } catch (e) {
-        console.warn('[Splash] Failed to read onboarding flag:', e);
+        console.warn('[Splash] Auth initialization notice:', e);
       }
-      router.replace('/(tabs)/home');
+      router.replace('/login');
     }, 800);
 
     return () => clearTimeout(timer);

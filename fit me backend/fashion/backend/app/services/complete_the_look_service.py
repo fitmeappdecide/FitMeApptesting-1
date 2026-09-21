@@ -361,78 +361,41 @@ def _generate_deterministic_blueprint(
     return None
 
 
-async def _generate_gemini_blueprint(
-    title: str,
-    image_url: Optional[str],
-    gender: str,
-) -> Optional[StylingBlueprint]:
-    try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(
-            project=settings.vertex_project_id,
-            location=settings.vertex_location,
-            enterprise=True,
-        )
-
-        prompt = (
-            f"You are an expert fashion stylist. Analyze this fashion product: '{title}' (Gender: {gender}).\n"
-            "Determine the 2 to 3 complementary product categories that naturally complete the look for this garment.\n"
-            "Respond strictly in JSON matching this schema:\n"
-            "{\n"
-            '  "theme": "Theme title",\n'
-            '  "formality": "ethnic" | "western_formal" | "western_casual",\n'
-            '  "slots": [\n'
-            '    {\n'
-            '      "slot_name": "footwear",\n'
-            '      "display_name": "Footwear",\n'
-            '      "search_query": "women white sneakers",\n'
-            '      "required_keywords": ["sneaker", "shoes", "flats"],\n'
-            '      "prohibited_keywords": ["heels", "juttis"]\n'
-            '    }\n'
-            '  ]\n'
-            "}"
-        )
-
-        response = await asyncio.to_thread(
-            client.models.generate_content,
-            model="gemini-2.5-flash",
-            contents=[prompt],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.2,
-            ),
-        )
-
-        text = response.text or ""
-        if text.startswith("```json"):
-            text = text[7:-3]
-        elif text.startswith("```"):
-            text = text[3:-3]
-
-        parsed = json.loads(text.strip())
-        slots = [
+def _generate_fallback_blueprint(title: str, gender: str) -> StylingBlueprint:
+    """Deterministic styling blueprint fallback when no specific category matches."""
+    resolved_gender = gender if gender in ("men", "women") else "women"
+    return StylingBlueprint(
+        theme="Complete the Look",
+        formality="western_casual",
+        gender=resolved_gender,
+        dominant_color=None,
+        slots=[
             StylingSlot(
-                slot_name=s["slot_name"],
-                display_name=s.get("display_name", s["slot_name"].capitalize()),
-                search_query=s["search_query"],
-                required_keywords=s.get("required_keywords", []),
-                prohibited_keywords=s.get("prohibited_keywords", []),
-            )
-            for s in parsed.get("slots", [])
-        ]
-        if slots:
-            return StylingBlueprint(
-                theme=parsed.get("theme", "Complete Look"),
-                formality=parsed.get("formality", "western_casual"),
-                gender=gender,
-                dominant_color=None,
-                slots=slots,
-            )
-    except Exception as e:
-        logger.warning(f"[CompleteTheLook] Gemini blueprint fallback failed: {e}")
-    return None
+                slot_name="bottoms",
+                display_name="Bottoms",
+                search_query=f"{resolved_gender} stylish jeans trousers",
+                required_keywords=["jean", "trouser", "pant", "denim", "bottom"],
+                prohibited_keywords=[],
+                tier=1,
+            ),
+            StylingSlot(
+                slot_name="footwear",
+                display_name="Footwear",
+                search_query=f"{resolved_gender} stylish footwear shoes sneakers",
+                required_keywords=["shoe", "sneaker", "sandal", "flat", "heel"],
+                prohibited_keywords=[],
+                tier=1,
+            ),
+            StylingSlot(
+                slot_name="accessory",
+                display_name="Accessories",
+                search_query=f"{resolved_gender} fashion accessories bag watch",
+                required_keywords=["bag", "watch", "sunglasses", "belt", "wallet", "jewelry"],
+                prohibited_keywords=[],
+                tier=1,
+            ),
+        ],
+    )
 
 
 # ─── Stage 2: Multi-Tier Retail Candidate Discovery ───────────────────────────
@@ -603,350 +566,110 @@ def _get_categorized_fashion_image(title: str) -> str:
 
 
 
-async def _fetch_gemini_grounded_candidates(
-    query: str,
-    platform: Optional[str] = None,
-    max_price: Optional[float] = None,
-) -> List[Dict[str, Any]]:
-    """
-    Native Gemini 2.5 Flash Google Search Grounding Discovery Engine.
-
-    KEY INSIGHTS:
-    1. Natural language output (not JSON schema) → Gemini includes real product URLs with
-       actual style IDs from Google Search. JSON schema mode causes hallucinated placeholder IDs.
-    2. Direct REST API via httpx completes in 18-25s. The genai.Client SDK hits a
-       504 DEADLINE_EXCEEDED at 60s for search grounding queries in Vertex AI.
-
-    Strategy:
-    - POST directly to Vertex AI REST endpoint via httpx (bypasses SDK deadline issue)
-    - Parse numbered list format: "1. Title | Rs price | https://..."
-    - Validate extracted URLs against is_direct_merchant_product_url
-    - Scrape real images via og:image from real product pages
-    """
-    project_id = getattr(settings, "vertex_project_id", None) or os.getenv("VERTEX_PROJECT_ID") or "fitme-3ac94"
-    location = getattr(settings, "vertex_location", None) or os.getenv("VERTEX_LOCATION") or "us-central1"
-    backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    gcp_key = os.path.join(backend_dir, "gcp-vertex-key.json")
-    gcp_key_env = os.environ.get("GCP_VERTEX_KEY_JSON") or os.environ.get("GCP_VERTEX_KEY_B64")
-    if gcp_key_env and not os.path.exists(gcp_key):
-        try:
-            raw_val = gcp_key_env.strip()
-            if not raw_val.startswith("{"):
-                import base64
-                raw_val = base64.b64decode(raw_val).decode("utf-8").strip()
-            with open(gcp_key, "w") as f:
-                f.write(raw_val)
-        except Exception:
-            pass
-
-    cred_path = gcp_key if os.path.exists(gcp_key) else (os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or getattr(settings, "firebase_credentials_path", None))
-
-    try:
-        # ── Get OAuth2 access token from service account ──
-        import google.oauth2.service_account as _sa
-        import google.auth.transport.requests as _tr
-
-        if cred_path and os.path.exists(cred_path):
-            _creds = _sa.Credentials.from_service_account_file(
-                cred_path,
-                scopes=["https://www.googleapis.com/auth/cloud-platform"],
-            )
-        else:
-            # Fallback: use ADC
-            import google.auth as _auth
-            _creds, _ = _auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-
-        _creds.refresh(_tr.Request())
-        access_token = _creds.token
-
-        # ── Build prompt — numbered list format triggers real URL output from Google Search ──
-        # AJIO product pages (/p/) are not directly indexed by Google Search crawlers.
-        # Direct user to real Myntra alternatives instead of failing or timing out.
-        effective_platform = platform
-        if platform and platform.lower() == "ajio":
-            site_instruction = "Search Myntra India (myntra.com) for real, currently available products."
-            effective_platform = None  # Allow real alternative URLs through validation
-        elif platform:
-            p_cap = platform.capitalize()
-            site_instruction = f"Search {p_cap} India ({p_cap.lower()}.com) for real, currently available products."
-        else:
-            site_instruction = "Search Myntra India (myntra.com) for real, currently available products."
-
-        budget_part = f" Total ensemble budget under Rs {max_price:.0f}." if max_price else ""
-        is_full_look = any(k in query.lower() for k in ["outfit", "look", "ensemble", "styling", "wedding", "college", "office", "party", "date"])
-
-        if is_full_look:
-            budget_str = f" under Rs {max_price:.0f}" if max_price else ""
-            prompt = (
-                f"{site_instruction} Find 4 matching fashion items for a {query} look{budget_str} (such as dress/saree/kurta, footwear/heels, bag/clutch, jewelry/earrings).\n\n"
-                "For each product, provide the real direct product page URL (e.g. myntra.com/...).\n"
-                "Format:\n"
-                "1. [Product Title] | Rs [price] | [full direct product URL]\n"
-                "2. [Product Title] | Rs [price] | [full direct product URL]\n"
-                "3. [Product Title] | Rs [price] | [full direct product URL]\n"
-                "4. [Product Title] | Rs [price] | [full direct product URL]\n\n"
-                "Only include real URLs found via Google Search — do NOT invent or fabricate product URLs."
-            )
-        else:
-            budget_str = f" Budget under Rs {max_price:.0f}." if max_price else ""
-            prompt = (
-                f"{site_instruction} Find 4 {query}.{budget_str}\n\n"
-                "For each product, provide the real direct product page URL (not search/category page).\n"
-                "Format:\n"
-                "1. [Product Title] | Rs [price] | [full product URL]\n"
-                "2. [Product Title] | Rs [price] | [full product URL]\n"
-                "3. [Product Title] | Rs [price] | [full product URL]\n"
-                "4. [Product Title] | Rs [price] | [full product URL]\n\n"
-                "Only include URLs found via Google Search — do NOT invent or fabricate product URLs."
-            )
-
-        # ── Call Vertex AI with Google Search Grounding via official genai.Client ──
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(vertexai=True, project=project_id, location=location)
-        try:
-            response = await asyncio.to_thread(
-                client.models.generate_content,
-                model="gemini-2.5-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    tools=[{"google_search": {}}],
-                    temperature=0.0,
-                ),
-            )
-            text = response.text or ""
-            logger.info(f"[GeminiGrounding] Response length: {len(text)} chars for query: '{query}'")
-        except Exception as api_err:
-            logger.warning(f"[GeminiGrounding] genai call error: {type(api_err).__name__}: {api_err}")
-            return []
-
-        if not text:
-            return []
-
-        # ── Parse numbered list: "1. Title | Rs price | https://..." ──
-        structured_items: List[Dict[str, Any]] = []
-
-        # Pattern 1: numbered/bullet "1. **Title** | Rs 1097 | https://..."
-        num_pattern = re.compile(
-            r'(?:^\d+\.|^\*{1,2}|\-)\s*\*{0,2}([^|\n]+?)\*{0,2}\s*\|\s*(?:Rs\.?|₹)\s*([\d,]+(?:\.\d+)?)\s*\|\s*(https?://\S+)',
-            re.MULTILINE
-        )
-        for m in num_pattern.finditer(text):
-            title = m.group(1).strip().rstrip("*").strip()
-            price_str = m.group(2).replace(",", "")
-            url = m.group(3).strip()
-            if "](" in url:
-                url = url.split("](")[-1]
-            url = url.lstrip("([< '\"").rstrip(".,;)]> '\"")
-            if "]" in url:
-                url = url.split("]")[0]
-            if ")" in url:
-                url = url.split(")")[0]
-            try:
-                price = float(price_str)
-            except Exception:
-                price = 0.0
-            if title and url:
-                structured_items.append({"title": title, "seller": "", "price": price, "url": url})
-
-        # Pattern 2: PRODUCT: ... | SELLER: ... | PRICE: ... | URL: ...
-        if not structured_items:
-            prod_pattern = re.compile(
-                r'PRODUCT:\s*(.+?)\s*\|\s*SELLER:\s*(.+?)\s*\|\s*PRICE:\s*([\d,]+(?:\.\d+)?)\s*\|\s*URL:\s*(https?://\S+)',
-                re.IGNORECASE
-            )
-            for m in prod_pattern.finditer(text):
-                title = m.group(1).strip()
-                seller = m.group(2).strip()
-                price_str = m.group(3).replace(",", "")
-                url = m.group(4).strip().rstrip(".,;)\"'")
-                try:
-                    price = float(price_str)
-                except Exception:
-                    price = 0.0
-                structured_items.append({"title": title, "seller": seller, "price": price, "url": url})
-
-        # Pattern 3: fallback — grab any valid merchant product URLs from text
-        if not structured_items:
-            raw_urls = re.findall(
-                r'https?://(?:www\.)?(?:myntra\.com|ajio\.com|amazon\.in|flipkart\.com|nykaafashion\.com)\S+',
-                text
-            )
-            for u in raw_urls:
-                clean_u = u.rstrip(".,;)\"'")
-                if is_direct_merchant_product_url(clean_u):
-                    structured_items.append({"title": "", "seller": "", "price": 0.0, "url": clean_u})
-                    if len(structured_items) >= 4:
-                        break
-
-        logger.info(f"[GeminiGrounding] Parsed {len(structured_items)} raw items from Gemini text")
-
-        if not structured_items:
-            logger.warning(f"[GeminiGrounding] No products parsed from response for '{query}'")
-            return []
-
-        # ── Validate and filter ──
-        used_urls: set = set()
-        valid_items: List[Dict[str, Any]] = []
-
-        for item in structured_items:
-            title = item["title"].strip()
-            seller = item["seller"].strip()
-            url = item["url"].strip()
-            price = item["price"]
-
-            canon_url = extract_merchant_destination_url(url) or url
-            if not is_direct_merchant_product_url(canon_url):
-                logger.info(f"[GeminiGrounding] Skipping non-product URL: {canon_url}")
-                continue
-
-            if effective_platform and effective_platform.lower() not in canon_url.lower():
-                logger.info(f"[GeminiGrounding] Skipping URL not on platform '{effective_platform}': {canon_url}")
-                continue
-
-            if canon_url in used_urls:
-                continue
-            used_urls.add(canon_url)
-
-            if title and any(k in title.lower() for k in ["girl", "girls", "kid", "kids", "baby", "toddler", "child", "children"]):
-                continue
-
-            # If title was missing from regex extraction, parse it from URL slug
-            if not title:
-                slug_m = re.search(r'(?:myntra\.com/[^/]+/[^/]+/|ajio\.com/|amazon\.in/|flipkart\.com/)([^/?#]+)', canon_url)
-                if slug_m:
-                    raw_slug = slug_m.group(1).replace('-', ' ').replace('_', ' ').strip()
-                    if raw_slug.lower() not in ("dp", "gp", "p", "product", "buy") and len(raw_slug) > 3:
-                        title = raw_slug.title()
-                if not title:
-                    title = query.title()
-
-            # Infer seller from domain
-            if not seller:
-                for domain, display in [("myntra", "Myntra"), ("ajio", "AJIO"), ("amazon.in", "Amazon India"), ("flipkart", "Flipkart"), ("nykaa", "Nykaa Fashion")]:
-                    if domain in canon_url.lower():
-                        seller = display
-                        break
-
-            valid_items.append({
-                "title": title,
-                "seller": seller or "Retailer",
-                "canon_url": canon_url,
-                "price": price,
-            })
-
-        logger.info(f"[GeminiGrounding] {len(valid_items)} valid products after URL validation")
-
-        # ── Enrich: scrape real image AND live discounted selling price from real product page ──
-        async def _enrich_one(item_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-            c_url = item_info["canon_url"]
-            title = item_info["title"]
-            seller = item_info["seller"]
-
-            final_img = ""
-            live_price = None
-            try:
-                meta = await asyncio.wait_for(fetch_real_product_metadata(c_url), timeout=5.0)
-                final_img = meta.get("image") or ""
-                live_price = meta.get("price")
-            except Exception:
-                final_img = ""
-
-            # Myntra CDN fallback — only if style ID looks real
-            if not final_img and "myntra.com" in c_url:
-                sid_m = re.search(r"/(\d{6,10})/buy", c_url)
-                if sid_m:
-                    style_id = sid_m.group(1)
-                    FAKE_IDS = {"12345678", "87654321", "11111111", "99999999", "12345679", "1234567"}
-                    if style_id not in FAKE_IDS and len(set(style_id)) > 2:
-                        final_img = f"https://assets.myntassets.com/h_1440,q_75,w_1080/v1/assets/images/{style_id}.jpg"
-
-            # Amazon CDN fallback
-            if not final_img and "amazon.in" in c_url:
-                asin_m = re.search(r"/(?:dp|gp/product|d)/([A-Z0-9]{10})", c_url)
-                if asin_m:
-                    final_img = f"https://images-na.ssl-images-amazon.com/images/P/{asin_m.group(1)}.01.LZZZZZZZ.jpg"
-
-            if not final_img:
-                final_img = _get_categorized_fashion_image(f"{title} {seller}")
-
-            # USE EXACT LIVE DISCOUNTED SELLING PRICE FROM STORE (NOT MRP OR ESTIMATE)
-            if live_price and live_price > 0:
-                actual_price = live_price
-            else:
-                actual_price = item_info["price"]
-
-            return {
-                "title": title,
-                "url": c_url,
-                "product_url": c_url,
-                "canonical_product_url": c_url,
-                "affiliate_url": c_url,
-                "image": final_img,
-                "price": actual_price or 999.0,
-                "seller": seller,
-                "source_type": "gemini_grounded_live",
-                "styling_note": "",
-            }
-
-        enriched = await asyncio.gather(*[_enrich_one(it) for it in valid_items])
-        candidates = [r for r in enriched if r is not None]
-
-        logger.info(f"[GeminiGrounding] Returned {len(candidates)} enriched candidates for '{query}'")
-        return candidates
-
-    except Exception as e:
-        logger.warning(f"[GeminiGrounding] Error: {e}")
-        return []
-
-
-
-
-
-
 async def _fetch_unified_candidates(
     blueprint: StylingBlueprint,
     serpapi_key: str,
     searchapi_key: str,
     custom_query: Optional[str] = None,
-    platform: Optional[str] = None,
-    max_price: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    STRICT 100% Native Gemini 2.5 Flash Google Search Grounding Engine for AVA with Gemini Native Stylist Fallback.
-    NO candidate caching, NO SearchAPI, NO SerpApi fallbacks.
-    Every user request queries live Gemini 2.5 Flash directly.
-    """
+    """Fetches candidate products using SerpApi Google Shopping (with SearchAPI fallback)."""
     query = custom_query if custom_query else _generate_unified_search_query(blueprint)
-    
-    # Clean conversational prefixes, numbers (prices already extracted into max_price), and ₹ symbol
-    clean_q = re.sub(r'₹\s*[\d,]+', ' ', query)  # remove ₹1000, ₹ 500 etc
-    clean_q = re.sub(r'(?i)\b(only|find|suggest|show|get|need|i want|me|give|in|under|below|for|rs\.?\s*[\d,]+|budget)\b', ' ', clean_q)
-    clean_q = re.sub(r'\b\d{2,6}\b', ' ', clean_q)  # remove bare price numbers
-    # Remove platform name from query text (platform already passed as separate param)
-    if platform:
-        clean_q = re.sub(re.escape(platform), '', clean_q, flags=re.IGNORECASE)
-    clean_q = re.sub(r'[^\w\s]', ' ', clean_q)  # remove stray punctuation
-    clean_q = re.sub(r'\s+', ' ', clean_q).strip()
+    cache_key = hashlib.md5(query.encode("utf-8")).hexdigest()
+    now = time.time()
+    if cache_key in _UNIFIED_SEARCH_CACHE:
+        ts, cached_cands = _UNIFIED_SEARCH_CACHE[cache_key]
+        if now - ts < _UNIFIED_CACHE_TTL:
+            return cached_cands
 
-    # Safety: if cleaning destroyed the query, fall back to original (stripped of just ₹/numbers)
-    if len(clean_q) < 3:
-        clean_q = re.sub(r'[₹\d,]', '', query).strip()
+    candidates: List[Dict[str, Any]] = []
 
-    # 1. Query live Gemini 2.5 Flash Google Search Grounding directly
-    # Pass only clean search intent — retailer targeting is handled by the prompt in _fetch_gemini_grounded_candidates
-    logger.info(f"[AVA Discovery] Fetching live Gemini 2.5 Flash Search Grounded candidates for '{clean_q}' (platform={platform}, max_price={max_price})")
-    candidates = await _fetch_gemini_grounded_candidates(clean_q, platform=platform, max_price=max_price)
+    # 1. SerpApi Google Shopping (Primary Engine)
+    if serpapi_key:
+        try:
+            params = {
+                "engine": "google_shopping",
+                "q": query,
+                "gl": "in",
+                "hl": "en",
+                "num": 40,
+                "api_key": serpapi_key,
+            }
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(SERPAPI_URL, params=params)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for item in data.get("shopping_results", []):
+                        title = item.get("title") or ""
+                        link = item.get("link") or item.get("product_link")
+                        img = item.get("thumbnail")
+                        seller = item.get("seller") or item.get("source")
+                        raw_price = item.get("extracted_price")
+                        if isinstance(raw_price, dict):
+                            raw_price = raw_price.get("value") or raw_price.get("amount")
+                        if raw_price is None and item.get("price"):
+                            m_p = re.search(r"[\d,.]+", str(item.get("price")))
+                            if m_p:
+                                try:
+                                    raw_price = float(m_p.group(0).replace(",", ""))
+                                except Exception:
+                                    pass
 
-    # 2. If a specific platform was requested but returned 0 items, retry live Gemini Grounding across Myntra/Flipkart
-    if not candidates and platform and platform.lower() != "ajio":
-        logger.info(f"[AVA Discovery] Live Search Grounding returned 0 for platform '{platform}'. Retrying live across Myntra/Flipkart for '{clean_q}'")
-        candidates = await _fetch_gemini_grounded_candidates(clean_q, platform=None, max_price=max_price)
+                        if title and link and img:
+                            candidates.append({
+                                "title": title,
+                                "url": link,
+                                "image": img,
+                                "price": raw_price,
+                                "seller": seller,
+                            })
+        except Exception as e:
+            logger.debug(f"[CompleteTheLook] Unified SerpApi query error: {e}")
 
-    # STRICT 100% NATIVE GEMINI SEARCH GROUNDING:
-    # ZERO MOCK FALLBACKS. ZERO FAKE URL GENERATION. ZERO UNSPLASH STOCK PHOTOS.
-    # If 0 products found, return empty list (AVA will report no items found honestly).
+    # 2. SearchAPI Google Shopping (Secondary Engine fallback)
+    if len(candidates) < 4 and searchapi_key:
+        try:
+            params = {
+                "engine": "google_shopping",
+                "q": query,
+                "gl": "in",
+                "hl": "en",
+                "num": 40,
+                "api_key": searchapi_key,
+            }
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(SEARCHAPI_URL, params=params)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for item in data.get("shopping_results", []):
+                        title = item.get("title") or ""
+                        link = item.get("link") or item.get("product_link")
+                        img = item.get("thumbnail")
+                        seller = item.get("seller")
+                        raw_price = item.get("extracted_price")
+                        if isinstance(raw_price, dict):
+                            raw_price = raw_price.get("value") or raw_price.get("amount")
+                        if raw_price is None and item.get("price"):
+                            m_p = re.search(r"[\d,.]+", str(item.get("price")))
+                            if m_p:
+                                try:
+                                    raw_price = float(m_p.group(0).replace(",", ""))
+                                except Exception:
+                                    pass
+
+                        if title and link and img:
+                            candidates.append({
+                                "title": title,
+                                "url": link,
+                                "image": img,
+                                "price": raw_price,
+                                "seller": seller,
+                            })
+        except Exception as e:
+            logger.debug(f"[CompleteTheLook] Unified SearchAPI query error: {e}")
+
+    if candidates:
+        _UNIFIED_SEARCH_CACHE[cache_key] = (now, candidates)
+
     return candidates
 
 
@@ -1262,9 +985,8 @@ class CompleteTheLookService:
         )
 
         if not blueprint:
-            blueprint = await _generate_gemini_blueprint(
+            blueprint = _generate_fallback_blueprint(
                 title=title,
-                image_url=image_url,
                 gender=resolved_gender,
             )
 

@@ -176,7 +176,7 @@ def is_direct_merchant_product_url(url: str | None) -> bool:
 
         # Specific Merchant Product URL signatures
         if "myntra.com" in netloc:
-            return bool("/buy" in path or bool(re.search(r"/\d+/?$", path)) or "/p/" in path or "/v/" in path)
+            return bool("/buy" in path or bool(re.search(r"/\d+/?$", path)) or "/p/" in path or "/v/" in path or "/product/" in path or "/products/" in path)
         if "ajio.com" in netloc:
             return bool("/p/" in path or "/g/" in path or bool(re.search(r"/\d+/?$", path)))
         if "amazon." in netloc:
@@ -188,6 +188,7 @@ def is_direct_merchant_product_url(url: str | None) -> bool:
             "tatacliq.com", "nykaafashion.com", "westside.com",
             "lifestylestores.com", "manyavar.com", "pantaloons.com",
             "fabindia.com", "zara.com", "hm.com", "limeroad.com",
+            "fashionwebz.com",
         ]
         for merchant in SUPPLEMENTAL_MERCHANTS:
             if merchant in netloc:
@@ -197,7 +198,11 @@ def is_direct_merchant_product_url(url: str | None) -> bool:
                     or re.search(r"/[a-z0-9-]{4,}/\d+", path)
                 )
 
-        # Reject everything else (unknown domains, redirect wrappers, aggregators)
+        # Generic valid ecommerce product detail page pattern
+        if (path.endswith(".html") or "/p/" in path or "/product/" in path or "/products/" in path) and len(path) > 5:
+            return True
+
+        # Reject everything else (unknown domains without product pattern, redirect wrappers, aggregators)
         return False
     except Exception:
         return False

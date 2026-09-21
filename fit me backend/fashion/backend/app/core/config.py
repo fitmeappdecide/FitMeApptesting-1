@@ -42,7 +42,6 @@ class Settings(BaseSettings):
     serpapi_api_key: str = "PPfe3AziK1FGR2btbHcSYgAy"
 
     price_refresh_ttl_hours: int = 12
-    use_gemini_grounding_ava: bool = True
 
     # Affiliate Marketing configuration
     cuelinks_api_key: str = ""

@@ -2,7 +2,7 @@
 
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { auth } from './index'; // needed for logout
-import { authApi } from '../services/api';
+import { authApi, ApiError } from '../services/api';
 import { purgeAllSessionState, initializeUserSession } from '../services/sessionManager';
 
 // Configure Google Sign-In (client ID from GoogleService-Info.plist)
@@ -73,22 +73,36 @@ export const loginWithGoogle = async () => {
     // Instead, send the Google idToken directly to our backend which
     // validates Firebase-compatible Google tokens server-side.
     console.log("Calling backend /api/v1/auth/firebase with Google idToken");
-    let response;
+    let response: any = null;
     try {
       response = await exchangeIdToken(idToken);
+      console.log("Backend login successful");
     } catch (error: any) {
       console.error("Backend token exchange failed:", error?.message);
-      throw error;
+      // If the backend actively rejected credentials/token (401, 403, INVALID_TOKEN, INVALID_CREDENTIALS),
+      // treat as authentication failure.
+      if (
+        error instanceof ApiError &&
+        (error.status === 401 || error.status === 403 || error.code === 'INVALID_TOKEN' || error.code === 'INVALID_CREDENTIALS')
+      ) {
+        throw error;
+      }
+      // Rule B: If backend is temporarily offline / network unavailable,
+      // native Google authentication itself succeeded, so preserve the session local-first.
+      console.warn("Backend unavailable during Google login; proceeding with authenticated Google session local-first.");
     }
-    console.log("Backend login successful");
 
     // Build user object from backend response & native sign-in data
     const user = {
-      uid: (response as any)?.user?.id ?? signInData?.user?.id ?? signInData?.user?.email ?? "google-user",
-      email: (response as any)?.user?.email ?? signInData?.user?.email ?? null,
-      displayName: (response as any)?.user?.full_name ?? (response as any)?.user?.displayName ?? signInData?.user?.name ?? null,
+      uid: response?.user?.id ?? signInData?.user?.id ?? signInData?.user?.email ?? null,
+      email: response?.user?.email ?? signInData?.user?.email ?? null,
+      displayName: response?.user?.full_name ?? response?.user?.displayName ?? signInData?.user?.name ?? null,
       photoURL: signInData?.user?.photo ?? null,
     };
+
+    if (!user.uid) {
+      throw new Error("No valid authenticated user returned from Google Sign-In");
+    }
 
     // Initialize clean session for newly authenticated user immediately
     await initializeUserSession({
@@ -104,6 +118,10 @@ export const loginWithGoogle = async () => {
     console.error("Google Sign-In FAILED");
     console.error(error?.code);
     console.error(error?.message);
+    // Rule A: On authentication failure, purge any partial state to guarantee clean state
+    try {
+      await purgeAllSessionState();
+    } catch (_) {}
     throw error;
   }
 };

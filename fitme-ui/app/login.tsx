@@ -9,7 +9,7 @@ import { Logo } from '../src/components/Logo';
 import { Colors, Spacing, Radii } from '../src/constants/theme';
 import { authApi, ApiError } from '../src/services/api';
 import { loginWithGoogle } from '../src/firebase/auth';
-import { initializeUserSession } from '../src/services/sessionManager';
+import { initializeUserSession, purgeAllSessionState } from '../src/services/sessionManager';
 
 function getSanitizedAuthErrorMessage(e: any): { isCancelled: boolean; message: string } {
   const code = e?.code ? String(e.code) : '';
@@ -104,6 +104,9 @@ export default function Login() {
       router.replace('/(tabs)/home');
     } catch (e) {
       console.error('[SignIn] Technical error:', e);
+      try {
+        await purgeAllSessionState();
+      } catch (_) {}
       setError(e instanceof ApiError ? e.message : 'Could not sign in. Check your connection and try again.');
     } finally {
       setLoading(false);
@@ -114,10 +117,16 @@ export default function Login() {
     setLoading(true);
     setError(null);
     try {
-      await loginWithGoogle();
+      const user = await loginWithGoogle();
+      if (!user) {
+        throw new Error('Google sign-in returned no authenticated user.');
+      }
       router.replace('/(tabs)/home');
     } catch (e: any) {
       console.error('[GoogleSignIn] Technical error:', e);
+      try {
+        await purgeAllSessionState();
+      } catch (_) {}
       const { isCancelled, message: cleanMessage } = getSanitizedAuthErrorMessage(e);
       Alert.alert(isCancelled ? 'Sign-in cancelled' : 'Sign-in error', cleanMessage);
     } finally {
