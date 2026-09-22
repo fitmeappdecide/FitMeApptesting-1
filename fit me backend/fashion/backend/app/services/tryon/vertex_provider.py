@@ -219,6 +219,7 @@ class VertexProvider(TryOnProvider):
                 self.__init__()
 
             # 1️⃣ & 2️⃣ Concurrently resolve user image and garment image in parallel
+            t_dl_start = time.perf_counter()
             user_bytes = b""
             garment_bytes = b""
             user_error = None
@@ -233,7 +234,8 @@ class VertexProvider(TryOnProvider):
                     self._resolve_user_image(client, user_image_url),
                     self._resolve_garment_image(client, garment_image_url),
                 )
-            timer.mark("1 & 2. User and Garment Images Downloaded Concurrently")
+            t_dl_end = time.perf_counter()
+            timer.mark(f"1 & 2. User & Garment Downloaded ({t_dl_end - t_dl_start:.2f}s)")
 
             if not user_bytes:
                 raise RuntimeError(f"User image could not be loaded: {user_error or 'image data is empty'}")
@@ -248,6 +250,7 @@ class VertexProvider(TryOnProvider):
             garment_path = None
             try:
                 # Preprocess user image & garment reference concurrently
+                t_prep_start = time.perf_counter()
                 user_task = asyncio.to_thread(preprocess_user_image, user_bytes)
                 garment_task = garment_preprocessor.preprocess(
                     garment_bytes,
@@ -260,7 +263,8 @@ class VertexProvider(TryOnProvider):
 
                 person_image, person_path = self._image_from_bytes(prepared_user_bytes, suffix=".png")
                 garment_image, garment_path = self._image_from_bytes(prepared_garment_bytes, suffix=".png")
-                timer.mark("3. Temp Files Created on Disk")
+                t_prep_end = time.perf_counter()
+                timer.mark(f"3. Preprocessing Complete ({t_prep_end - t_prep_start:.2f}s)")
 
                 source = RecontextImageSource(
                     person_image=person_image,
@@ -274,19 +278,20 @@ class VertexProvider(TryOnProvider):
                 )
 
                 # 4️⃣ Call Vertex AI
-                v_start = time.time()
+                v_start = time.perf_counter()
                 print(f"⏱️ [VERTEX AI START] Model: {self.model_name}")
                 response = self.client.models.recontext_image(
                     model=self.model_name,
                     source=source,
                     config=config,
                 )
-                v_duration = time.time() - v_start
+                v_duration = time.perf_counter() - v_start
                 print(f"⏱️ [VERTEX AI SUCCESS] Model Inference Duration: {v_duration:.4f}s")
                 timer.mark(f"4. Vertex AI Model Inference Complete ({v_duration:.2f}s)")
 
                 generated_bytes = response.generated_images[0].image.image_bytes
                 public_url = ""
+                t_post_start = time.perf_counter()
                 try:
                     # Optimize to canonical WebP (max 1200px, quality 88) and grid thumbnail (400px width, quality 80)
                     canonical_bytes, canonical_mime = optimize_tryon_result(generated_bytes, max_dim=1200, quality=88)
@@ -312,11 +317,19 @@ class VertexProvider(TryOnProvider):
                     import base64
                     b64_str = base64.b64encode(generated_bytes).decode("utf-8")
                     public_url = f"data:image/png;base64,{b64_str}"
+                t_post_end = time.perf_counter()
 
                 return TryOnResult(
                     image_urls=[public_url],
                     provider_name="vertex_ai",
                     processing_time_seconds=time.time() - start,
+                    metadata={
+                        "download_duration_s": t_dl_end - t_dl_start,
+                        "prep_duration_s": t_prep_end - t_prep_start,
+                        "vertex_duration_s": v_duration,
+                        "post_duration_s": t_post_end - t_post_start,
+                        "total_provider_duration_s": time.time() - start,
+                    },
                 )
 
             except Exception as e:

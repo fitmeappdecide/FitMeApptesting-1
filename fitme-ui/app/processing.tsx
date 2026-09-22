@@ -60,6 +60,7 @@ export default function Processing() {
   const router = useRouter();
 
   const productId = useSession((s) => s.productId);
+  const setProductId = useSession((s) => s.setProductId);
   const localPhotoUri = useSession((s) => s.localPhotoUri);
   const setLocalPhotoUri = useSession((s) => s.setLocalPhotoUri);
   const savedPhotoId = useSession((s) => s.savedPhotoId);
@@ -162,82 +163,159 @@ export default function Processing() {
     isPipelineRunningRef.current = true;
 
     const t0 = performance.now();
-    console.log(`⏱️ [CLIENT TELEMETRY START] startPipeline() @ T+0.00ms`);
+    const t0Date = new Date();
+    const formatTime = (d: Date | null) => d ? d.toTimeString().split(' ')[0] + '.' + String(d.getMilliseconds()).padStart(3, '0') : '-';
+
+    let t1GarmentStart = 0;
+    let t1Date: Date | null = null;
+    let t2GarmentEnd = 0;
+    let t2Date: Date | null = null;
+
+    let t3UserStart = 0;
+    let t3Date: Date | null = null;
+    let t4UserEnd = 0;
+    let t4Date: Date | null = null;
+
+    let t5TryOnStart = 0;
+    let t5Date: Date | null = null;
+    let t6TryOnEnd = 0;
+    let t6Date: Date | null = null;
+
+    let t7ProcessStart = 0;
+    let t7Date: Date | null = null;
+    let t8DisplayEnd = 0;
+    let t8Date: Date | null = null;
+
+    console.log(`⏱️ [CLIENT TIMING] T0 Processing screen mounted at ${formatTime(t0Date)}`);
     setErrorType(null);
     setErrorMsg(null);
 
     let activeScanId = scanId;
     let activeSavedPhotoId = savedPhotoId;
+    let activeProductId = productId;
 
     try {
-      // 1. STRICT PRIORITY: If localPhotoUri exists (new camera/gallery capture), it MUST be used for this Try-On.
-      // Ignore any stale activeSavedPhotoId from previous sessions.
-      if (localPhotoUri) {
-        activeSavedPhotoId = null;
-        activeScanId = null;
-        targetProgressRef.current = 25;
+      // 1. Concurrently resolve Garment Registration & User Photo Upload in parallel
+      targetProgressRef.current = 25;
 
-        const tu0 = performance.now();
-        console.log(`⏱️ [CLIENT TELEMETRY] Initiating single savedPhotosApi.upload() @ T+${(tu0 - t0).toFixed(2)}ms`);
-        const savedRes = await savedPhotosApi.upload(localPhotoUri);
-        const tu1 = performance.now();
-        console.log(`⏱️ [CLIENT TELEMETRY] savedPhotosApi.upload() completed in ${(tu1 - tu0).toFixed(2)}ms`);
+      const garmentPromise = useSession.getState().garmentRegistrationPromise;
 
-        if (savedRes?.id) {
-          activeSavedPhotoId = savedRes.id;
-          setSavedPhotoId(savedRes.id);
-          setSavedPhotoName(savedRes.display_name);
-          if (savedRes.scan_id) {
-            activeScanId = savedRes.scan_id;
-            setScanId(activeScanId);
+      const garmentTask = (async () => {
+        t1GarmentStart = performance.now();
+        t1Date = new Date();
+        if (garmentPromise) {
+          try {
+            const gRes = await garmentPromise;
+            if (gRes?.product_id) {
+              activeProductId = gRes.product_id;
+              setProductId(gRes.product_id);
+            }
+          } catch (gErr: any) {
+            console.error('[PROCESSING] Garment registration failed:', gErr);
+            throw gErr;
+          } finally {
+            useSession.getState().setGarmentRegistrationPromise(null);
           }
-          console.log('⏱️ [CLIENT] Photo auto-saved to library with ID:', savedRes.id, 'and scan_id:', savedRes.scan_id);
         }
+        t2GarmentEnd = performance.now();
+        t2Date = new Date();
+        if (!activeProductId) {
+          throw new Error('Garment product reference is missing.');
+        }
+        return activeProductId;
+      })();
 
-        setLocalPhotoUri(null);
-      }
+      const userPhotoTask = (async () => {
+        t3UserStart = performance.now();
+        t3Date = new Date();
+        if (localPhotoUri) {
+          activeSavedPhotoId = null;
+          activeScanId = null;
+
+          const inFlightPhotoPromise = useSession.getState().userPhotoUploadPromise;
+          let savedRes: any;
+
+          if (inFlightPhotoPromise) {
+            savedRes = await inFlightPhotoPromise;
+          } else {
+            savedRes = await savedPhotosApi.upload(localPhotoUri);
+          }
+
+          // Clean up in-flight promise reference
+          useSession.getState().setUserPhotoUploadPromise(null);
+
+          if (savedRes?.id) {
+            activeSavedPhotoId = savedRes.id;
+            setSavedPhotoId(savedRes.id);
+            setSavedPhotoName(savedRes.display_name);
+            if (savedRes.scan_id) {
+              activeScanId = savedRes.scan_id;
+              setScanId(activeScanId);
+            }
+          }
+          setLocalPhotoUri(null);
+        } else {
+          useSession.getState().setUserPhotoUploadPromise(null);
+        }
+        t4UserEnd = performance.now();
+        t4Date = new Date();
+        return { activeSavedPhotoId, activeScanId };
+      })();
+
+      const [resolvedProductId, resolvedPhoto] = await Promise.all([garmentTask, userPhotoTask]);
+      activeProductId = resolvedProductId;
+      activeSavedPhotoId = resolvedPhoto.activeSavedPhotoId;
+      activeScanId = resolvedPhoto.activeScanId;
 
       // 2. Prepare garment & Start Try-On Job (using activeScanId and/or activeSavedPhotoId)
-      if ((activeScanId || activeSavedPhotoId) && productId) {
+      if ((activeScanId || activeSavedPhotoId) && activeProductId) {
         targetProgressRef.current = 48;
 
-        const ts0 = performance.now();
-        console.log(`⏱️ [CLIENT TELEMETRY] Initiating tryOnApi.start() @ T+${(ts0 - t0).toFixed(2)}ms`);
-        const { job_id } = await tryOnApi.start(activeScanId, productId, activeSavedPhotoId);
-        const ts1 = performance.now();
-        console.log(`⏱️ [CLIENT TELEMETRY] tryOnApi.start() returned job_id in ${(ts1 - ts0).toFixed(2)}ms`);
+        t5TryOnStart = performance.now();
+        t5Date = new Date();
+        const startRes = await tryOnApi.start(activeScanId, activeProductId, activeSavedPhotoId);
+        t6TryOnEnd = performance.now();
+        t6Date = new Date();
+        const job_id = startRes.job_id;
         setTryOnJobId(job_id);
 
-        // 3. Poll status
-        targetProgressRef.current = 75;
+        let finalResultUrls: string[] = [];
 
-        let pollCount = 0;
-        const tp0 = performance.now();
-        const result = await tryOnApi.waitForResult(job_id, (status) => {
-          pollCount++;
-          const tNow = performance.now();
-          console.log(`⏱️ [CLIENT TELEMETRY] Poll #${pollCount} @ T+${(tNow - tp0).toFixed(2)}ms -> status: ${status.status}`);
-          if (status.status === 'queued') {
-            targetProgressRef.current = Math.max(targetProgressRef.current, 55);
-          } else if (status.status === 'uploading') {
-            targetProgressRef.current = Math.max(targetProgressRef.current, 65);
-          } else if (status.status === 'processing') {
-            const currentPct = status.progress_pct ?? 80;
-            targetProgressRef.current = Math.max(targetProgressRef.current, currentPct);
-          }
-        });
-
-        const tEnd = performance.now();
-        console.log(`⏱️ [CLIENT TELEMETRY END] Total TryOn Pipeline Time: ${(tEnd - t0).toFixed(2)}ms (${((tEnd - t0) / 1000).toFixed(2)}s)`);
+        // Direct Fast-Path: if /tryon/start returned completed image URLs directly, use them immediately
+        if (startRes.result_image_urls && startRes.result_image_urls.length > 0) {
+          finalResultUrls = startRes.result_image_urls;
+        } else {
+          // Fallback Polling Path: if async/queued or result URLs absent in /start, poll as fallback
+          targetProgressRef.current = 75;
+          let pollCount = 0;
+          const tp0 = performance.now();
+          const result = await tryOnApi.waitForResult(job_id, (status) => {
+            pollCount++;
+            const tNow = performance.now();
+            console.log(`⏱️ [CLIENT TELEMETRY] Poll #${pollCount} @ T+${((tNow - tp0)/1000).toFixed(2)}s -> status: ${status.status}`);
+            if (status.status === 'queued') {
+              targetProgressRef.current = Math.max(targetProgressRef.current, 55);
+            } else if (status.status === 'uploading') {
+              targetProgressRef.current = Math.max(targetProgressRef.current, 65);
+            } else if (status.status === 'processing') {
+              const currentPct = status.progress_pct ?? 80;
+              targetProgressRef.current = Math.max(targetProgressRef.current, currentPct);
+            }
+          });
+          finalResultUrls = result.result_image_urls || [];
+        }
 
         targetProgressRef.current = 100;
         setProgress(100);
         setStatusText('Your look is ready!');
-        setResultImageUrls(result.result_image_urls);
+        setResultImageUrls(finalResultUrls);
 
-        // Pre-cache the result image in background so result screen opens instantly
-        if (result.result_image_urls && result.result_image_urls.length > 0) {
-          const firstUrl = result.result_image_urls[0];
+        t7ProcessStart = performance.now();
+        t7Date = new Date();
+
+        // Non-blocking background pre-cache
+        if (finalResultUrls.length > 0) {
+          const firstUrl = finalResultUrls[0];
           if (firstUrl && (firstUrl.startsWith('http://') || firstUrl.startsWith('https://'))) {
             try {
               const cacheFolder = `${FileSystem.cacheDirectory}fitme_img_cache/`;
@@ -256,6 +334,33 @@ export default function Processing() {
           }
         }
 
+        t8DisplayEnd = performance.now();
+        t8Date = new Date();
+
+        const garmentDuration = ((t2GarmentEnd - t1GarmentStart) / 1000).toFixed(2);
+        const userDuration = ((t4UserEnd - t3UserStart) / 1000).toFixed(2);
+        const uploadsCombined = ((Math.max(t2GarmentEnd, t4UserEnd) - t0) / 1000).toFixed(2);
+        const tryonNetworkDuration = ((t6TryOnEnd - t5TryOnStart) / 1000).toFixed(2);
+        const preCacheDuration = ((t8DisplayEnd - t7ProcessStart) / 1000).toFixed(2);
+        const totalPipelineDuration = ((t8DisplayEnd - t0) / 1000).toFixed(2);
+
+        console.log(`
+==================================================
+TRYON TIMING - CLIENT
+Processing mounted:       ${formatTime(t0Date)} (T+0.00s)
+Garment upload start:     ${formatTime(t1Date)} (T+${((t1GarmentStart - t0) / 1000).toFixed(2)}s)
+Garment upload end:       ${formatTime(t2Date)} (T+${((t2GarmentEnd - t0) / 1000).toFixed(2)}s)  (+${garmentDuration}s)
+User upload start:        ${formatTime(t3Date)} (T+${((t3UserStart - t0) / 1000).toFixed(2)}s)
+User upload end:          ${formatTime(t4Date)} (T+${((t4UserEnd - t0) / 1000).toFixed(2)}s)  (+${userDuration}s)
+Both uploads finished:    T+${uploadsCombined}s
+TryOn request start:      ${formatTime(t5Date)} (T+${((t5TryOnStart - t0) / 1000).toFixed(2)}s)
+TryOn response received:  ${formatTime(t6Date)} (T+${((t6TryOnEnd - t0) / 1000).toFixed(2)}s)  (+${tryonNetworkDuration}s)
+Result cache & display:   ${formatTime(t7Date)} -> ${formatTime(t8Date)}  (+${preCacheDuration}s)
+--------------------------------------------------
+TOTAL Processing -> Result: ${totalPipelineDuration}s
+==================================================
+`);
+
         setTimeout(() => router.replace({ pathname: '/result', params: { jobId: job_id } } as any), 450);
       }
     } catch (e) {
@@ -263,7 +368,7 @@ export default function Processing() {
       isPipelineRunningRef.current = false;
       const isUploadError = !activeScanId && !savedPhotoId;
       setErrorType(isUploadError ? 'upload' : 'tryon');
-      setErrorMsg(e instanceof ApiError ? e.message : 'An unexpected error occurred.');
+      setErrorMsg(e instanceof ApiError ? e.message : (e instanceof Error ? e.message : 'An unexpected error occurred.'));
     }
   };
 
@@ -280,6 +385,8 @@ export default function Processing() {
     pipelineStartedRef.current = false;
     setErrorType(null);
     setErrorMsg(null);
+    useSession.getState().setGarmentRegistrationPromise(null);
+    useSession.getState().setUserPhotoUploadPromise(null);
     // Reset stale product ID if try-on failed so fresh registration occurs
     if (useSession.getState().productImageUri) {
       useSession.getState().setProductId('');
@@ -292,6 +399,8 @@ export default function Processing() {
 
   const handleCancel = () => {
     // Clear state & navigate back to upload screen
+    useSession.getState().setGarmentRegistrationPromise(null);
+    useSession.getState().setUserPhotoUploadPromise(null);
     setLocalPhotoUri(null);
     setScanId(null);
     setSavedPhotoId(null);

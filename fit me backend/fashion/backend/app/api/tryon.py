@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 import re
+import time
 from typing import Any, Literal, Optional
 import uuid
 
@@ -175,6 +176,7 @@ async def start_tryon(
     user: User = Depends(get_current_user_or_anonymous),
     db: AsyncSession = Depends(get_db),
 ) -> TryOnStartResponse:
+    t_b0 = time.perf_counter()
     with TelemetryTimer("POST /api/v1/tryon/start") as timer:
         # ------------------------------------------------------------------
         # 1. Load and validate photo source and garment
@@ -266,6 +268,8 @@ async def start_tryon(
                 "इस ब्रांड की मासिक ट्राई-ऑन सीमा समाप्त हो गई है।",
             )
 
+        t_b3 = time.perf_counter()
+
         # ------------------------------------------------------------------
         # 4. Body profile / cluster key check
         # ------------------------------------------------------------------
@@ -307,11 +311,16 @@ async def start_tryon(
         existing_dup = (await db.execute(exact_dup_stmt)).scalars().first()
 
         if existing_dup and existing_dup.result_image_urls and len(existing_dup.result_image_urls) > 0:
+            signed_dup_urls = [storage_service.sign_if_private(u) for u in existing_dup.result_image_urls]
             return TryOnStartResponse(
                 job_id=existing_dup.id,
                 estimated_seconds=1,
                 cache_tier="exact",
+                status="completed",
+                result_image_urls=signed_dup_urls,
             )
+
+        t_b4 = time.perf_counter()
 
         # ------------------------------------------------------------------
         # 6. Create job record with saved photo snapshot and session isolation
@@ -333,10 +342,12 @@ async def start_tryon(
         db.add(job)
         await db.flush()
         timer.mark("2. TryOnJob Created in DB")
+        t_b5 = time.perf_counter()
 
         # ------------------------------------------------------------------
         # 7. Execute try-on (cache hit or live provider call)
         # ------------------------------------------------------------------
+        result = None
         try:
             if cached_urls:
                 job.result_image_urls = cached_urls
@@ -382,6 +393,8 @@ async def start_tryon(
             job.error_message = str(exc)
             job.processing_time_seconds = 0.5
 
+        t_b7 = time.perf_counter()
+
         # ------------------------------------------------------------------
         # 8. Finalise job, brand counter, analytics
         # ------------------------------------------------------------------
@@ -421,10 +434,39 @@ async def start_tryon(
             except Exception as final_err:
                 print(f"Notice: TryOn fallback commit notice ({final_err})")
 
+        t_b8 = time.perf_counter()
+
+        # Structured forensic timing log for Railway / Mac terminal inspection
+        provider_meta = getattr(result, "metadata", {}) if result else {}
+        dl_s = provider_meta.get("download_duration_s", 0.0) if provider_meta else 0.0
+        prep_s = provider_meta.get("prep_duration_s", 0.0) if provider_meta else 0.0
+        v_s = provider_meta.get("vertex_duration_s", 0.0) if provider_meta else 0.0
+        post_s = provider_meta.get("post_duration_s", 0.0) if provider_meta else 0.0
+        t_b9 = time.perf_counter()
+
+        print(f"""
+======================================================================
+TRYON TIMING - BACKEND BREAKDOWN
+- DB Validation & Queries (B0->B5):    {(t_b5 - t_b0):.3f}s
+- Cache / Duplicate Check (B3->B4):     {(t_b4 - t_b3):.3f}s
+- TryOnJob Flush (B4->B5):              {(t_b5 - t_b4):.3f}s
+- [PROVIDER] Image Downloads:           {dl_s:.3f}s
+- [PROVIDER] Preprocessing:             {prep_s:.3f}s
+- [PROVIDER] Vertex AI Inference:       {v_s:.3f}s
+- [PROVIDER] Storage Upload / WebP:     {post_s:.3f}s
+- DB Commit & Analytics (B7->B8):       {(t_b8 - t_b7):.3f}s
+----------------------------------------------------------------------
+TOTAL Backend Processing Time:          {(t_b9 - t_b0):.3f}s
+======================================================================
+""")
+
+        signed_result_urls = [storage_service.sign_if_private(u) for u in (job.result_image_urls or [])]
         return TryOnStartResponse(
             job_id=job.id,
             estimated_seconds=1 if cached_urls else 25,
             cache_tier=cache_tier,
+            status=job.status,
+            result_image_urls=signed_result_urls,
         )
 
 

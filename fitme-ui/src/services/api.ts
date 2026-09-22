@@ -598,7 +598,13 @@ export const scanApi = {
 };
 
 // ─── TRY-ON ── /api/v1/tryon ─────────────────────────────────────────
-export type TryOnStartResponse = { job_id: string; estimated_seconds: number; cache_tier: string | null };
+export type TryOnStartResponse = {
+  job_id: string;
+  estimated_seconds: number;
+  cache_tier: string | null;
+  status?: string | null;
+  result_image_urls?: string[] | null;
+};
 export type TryOnStatusResponse = {
   id: string;
   status: string;

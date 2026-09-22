@@ -19,7 +19,9 @@ class TryOnStartRequest(BaseModel):
 class TryOnStartResponse(BaseModel):
     job_id: uuid.UUID
     estimated_seconds: int
-    cache_tier: str | None
+    cache_tier: str | None = None
+    status: str | None = None
+    result_image_urls: list[str] | None = None
 
 
 class TryOnStatusResponse(BaseModel):

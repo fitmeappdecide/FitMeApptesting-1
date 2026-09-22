@@ -75,6 +75,7 @@ export default function UploadPhoto() {
     setPhotoUri(uri);
     setSavedPhotoId(id);
     setSavedPhotoName(name);
+    useSession.getState().setUserPhotoUploadPromise(null);
   };
 
   const takePhoto = async () => {
@@ -96,7 +97,9 @@ export default function UploadPhoto() {
       setSavedPhotoName(null);
       setPhotoUri(uri);
       setLocalPhotoUri(uri);
-      uploadPhoto(uri).then((saved) => {
+      const uploadPromise = uploadPhoto(uri);
+      useSession.getState().setUserPhotoUploadPromise(uploadPromise);
+      uploadPromise.then((saved) => {
         if (saved && useSession.getState().localPhotoUri === uri) {
           setSelectedSavedId(saved.id);
           setSavedPhotoId(saved.id);
@@ -127,7 +130,9 @@ export default function UploadPhoto() {
       setSavedPhotoName(null);
       setPhotoUri(uri);
       setLocalPhotoUri(uri);
-      uploadPhoto(uri).then((saved) => {
+      const uploadPromise = uploadPhoto(uri);
+      useSession.getState().setUserPhotoUploadPromise(uploadPromise);
+      uploadPromise.then((saved) => {
         if (saved && useSession.getState().localPhotoUri === uri) {
           setSelectedSavedId(saved.id);
           setSavedPhotoId(saved.id);
@@ -161,51 +166,39 @@ export default function UploadPhoto() {
     }
   };
 
-  const handleContinue = async () => {
+  const handleContinue = () => {
     if (!photoUri) return;
 
-    setSubmitting(true);
-    try {
-      // Synchronously lock the exact currently selected model photo into session state
-      if (selectedSavedId) {
-        setSavedPhotoId(selectedSavedId);
-        setLocalPhotoUri(null);
-      } else {
-        setSavedPhotoId(null);
-        setSavedPhotoName(null);
-        setLocalPhotoUri(photoUri);
-      }
-
-      // 1. If background garment registration promise is pending from import.tsx, await it first
-      const pendingPromise = useSession.getState().garmentRegistrationPromise;
-      if (pendingPromise && !productId) {
-        console.log('[TRY-ON] Awaiting pending background garment registration promise...');
-        const res = await pendingPromise;
-        setProductId(res.product_id);
-      }
-
-      // 2. If we have an un-registered outfit reference image (from bottom camera), register it as garment first
-      if (productImageUri && !productId && !pendingPromise) {
-        console.log('[QUICK TRY-ON] Registering camera outfit reference image as garment...');
-        const res = await productApi.uploadGarment(productImageUri, { title: 'Quick Reference Outfit' });
-        setProductId(res.product_id);
-      }
-
-      if (!productImageUri && !productId && !useSession.getState().productId) {
-        Alert.alert('Outfit Reference Required', 'Please select or capture an outfit to try on.');
-        return;
-      }
-
-      router.push('/processing');
-    } catch (err: any) {
-      console.error('[TRY-ON] Error preparing garment reference:', err);
-      Alert.alert('Upload Error', err?.message || 'Unable to prepare outfit reference for try-on. Please try again.');
-    } finally {
-      setSubmitting(false);
+    // Synchronously lock the exact currently selected model photo into session state
+    if (selectedSavedId) {
+      setSavedPhotoId(selectedSavedId);
+      setLocalPhotoUri(null);
+      useSession.getState().setUserPhotoUploadPromise(null);
+    } else {
+      setSavedPhotoId(null);
+      setSavedPhotoName(null);
+      setLocalPhotoUri(photoUri);
     }
+
+    const pendingPromise = useSession.getState().garmentRegistrationPromise;
+
+    // If we have an un-registered outfit reference image (e.g. from bottom camera), start registering it in background
+    if (productImageUri && !productId && !pendingPromise) {
+      console.log('[QUICK TRY-ON] Initiating background garment registration...');
+      const promise = productApi.uploadGarment(productImageUri, { title: 'Quick Reference Outfit' });
+      useSession.getState().setGarmentRegistrationPromise(promise);
+    }
+
+    if (!productImageUri && !productId && !pendingPromise && !useSession.getState().productId) {
+      Alert.alert('Outfit Reference Required', 'Please select or capture an outfit to try on.');
+      return;
+    }
+
+    // Navigate to /processing immediately (<50ms)!
+    router.push('/processing');
   };
 
-  const hasOutfitReference = Boolean(productImageUri || productId);
+  const hasOutfitReference = Boolean(productImageUri || productId || useSession.getState().garmentRegistrationPromise);
   const isContinueDisabled = submitting || !photoUri || !hasOutfitReference;
 
   return (
