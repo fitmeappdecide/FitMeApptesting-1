@@ -3,7 +3,7 @@ import uuid
 import time
 import tempfile
 import asyncio
-from typing import Literal
+from typing import Literal, Optional
 
 import httpx
 from google import genai
@@ -86,6 +86,98 @@ class VertexProvider(TryOnProvider):
             except Exception:
                 pass
 
+    async def _resolve_user_image(self, client: httpx.AsyncClient, user_image_url: str) -> tuple[bytes, Optional[str]]:
+        try:
+            if not user_image_url or not isinstance(user_image_url, str):
+                return b"", "User image URL is empty"
+            if os.path.exists(user_image_url):
+                with open(user_image_url, "rb") as f:
+                    return f.read(), None
+            if user_image_url.startswith("http://") or user_image_url.startswith("https://"):
+                resp = await client.get(user_image_url)
+                resp.raise_for_status()
+                return resp.content, None
+            if user_image_url.startswith("data:"):
+                import base64
+                header, data = user_image_url.split(",", 1)
+                return base64.b64decode(data), None
+            if user_image_url.startswith("scans/") or user_image_url.startswith("user-photos/") or user_image_url.startswith("user_photos/"):
+                data = await asyncio.to_thread(download_user_photo, user_image_url)
+                return data, None
+            data = await asyncio.to_thread(retrieve_image_bytes_from_encrypted_ref, user_image_url)
+            return data, None
+        except Exception as e:
+            print(f"Notice: User image retrieval error ({e})")
+            return b"", str(e)
+
+    async def _resolve_garment_image(self, client: httpx.AsyncClient, garment_image_url: str) -> tuple[bytes, Optional[str]]:
+        try:
+            if not garment_image_url or not isinstance(garment_image_url, str):
+                return b"", "Garment image URL is empty"
+            if os.path.exists(garment_image_url):
+                with open(garment_image_url, "rb") as f:
+                    return f.read(), None
+            if (
+                garment_image_url.startswith("garments/")
+                or garment_image_url.startswith("scans/")
+                or garment_image_url.startswith("user_photos/")
+                or garment_image_url.startswith("tryon_results/")
+            ):
+                data = await asyncio.to_thread(download_image_from_storage, garment_image_url)
+                return data, None
+            if (
+                settings.supabase_url
+                and settings.supabase_url in garment_image_url
+                and ("/storage/v1/object/" in garment_image_url or f"/{settings.supabase_storage_bucket}/" in garment_image_url)
+            ):
+                bucket_name = settings.supabase_storage_bucket
+                clean_path = garment_image_url.split("?")[0]
+                for prefix in (f"/storage/v1/object/public/{bucket_name}/", f"/storage/v1/object/sign/{bucket_name}/", f"/{bucket_name}/"):
+                    if prefix in clean_path:
+                        clean_path = clean_path.split(prefix, 1)[1]
+                        break
+                try:
+                    data = await asyncio.to_thread(download_image_from_storage, clean_path)
+                    return data, None
+                except Exception:
+                    signed = sign_if_private(garment_image_url)
+                    target_url = signed if (signed and signed != garment_image_url) else garment_image_url
+                    resp = await client.get(target_url)
+                    resp.raise_for_status()
+                    return resp.content, None
+            if garment_image_url.startswith("http://") or garment_image_url.startswith("https://"):
+                try:
+                    resp = await client.get(garment_image_url)
+                    resp.raise_for_status()
+                    return resp.content, None
+                except Exception as http_err:
+                    signed = sign_if_private(garment_image_url)
+                    if signed and signed != garment_image_url:
+                        resp = await client.get(signed)
+                        resp.raise_for_status()
+                        return resp.content, None
+                    elif settings.supabase_storage_bucket and f"/{settings.supabase_storage_bucket}/" in garment_image_url:
+                        clean_path = garment_image_url.split(f"/{settings.supabase_storage_bucket}/", 1)[1].split("?")[0]
+                        data = await asyncio.to_thread(download_image_from_storage, clean_path)
+                        return data, None
+                    else:
+                        raise http_err
+            if garment_image_url.startswith("data:"):
+                import base64
+                header, data = garment_image_url.split(",", 1)
+                return base64.b64decode(data), None
+            if garment_image_url.startswith("/"):
+                full_url = f"{settings.supabase_url}{garment_image_url}" if settings.supabase_url else ""
+                if full_url:
+                    resp = await client.get(full_url)
+                    resp.raise_for_status()
+                    return resp.content, None
+            data = await asyncio.to_thread(retrieve_image_bytes_from_encrypted_ref, garment_image_url)
+            return data, None
+        except Exception as e:
+            print(f"Notice: Garment image retrieval error ({e})")
+            return b"", str(e)
+
     def _image_from_bytes(self, img_bytes: bytes, suffix: str = ".png") -> tuple[Image, str]:
         fd, path = tempfile.mkstemp(suffix=suffix)
         try:
@@ -126,7 +218,7 @@ class VertexProvider(TryOnProvider):
             if self.client is None:
                 self.__init__()
 
-            # 1️⃣ Resolve user image
+            # 1️⃣ & 2️⃣ Concurrently resolve user image and garment image in parallel
             user_bytes = b""
             garment_bytes = b""
             user_error = None
@@ -137,96 +229,11 @@ class VertexProvider(TryOnProvider):
                 "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
             }
             async with httpx.AsyncClient(headers=headers, timeout=30.0, follow_redirects=True) as client:
-                try:
-                    if not user_image_url or not isinstance(user_image_url, str):
-                        user_error = "User image URL is empty"
-                    elif os.path.exists(user_image_url):
-                        with open(user_image_url, "rb") as f:
-                            user_bytes = f.read()
-                    elif user_image_url.startswith("http://") or user_image_url.startswith("https://"):
-                        resp = await client.get(user_image_url)
-                        resp.raise_for_status()
-                        user_bytes = resp.content
-                    elif user_image_url.startswith("data:"):
-                        import base64
-                        header, data = user_image_url.split(",", 1)
-                        user_bytes = base64.b64decode(data)
-                    elif user_image_url.startswith("scans/") or user_image_url.startswith("user-photos/") or user_image_url.startswith("user_photos/"):
-                        user_bytes = download_user_photo(user_image_url)
-                    else:
-                        user_bytes = retrieve_image_bytes_from_encrypted_ref(user_image_url)
-                    timer.mark("1. User Image Downloaded")
-                except Exception as e:
-                    user_error = str(e)
-                    print(f"Notice: User image retrieval error ({e})")
-
-                # 2️⃣ Download garment image
-                try:
-                    if not garment_image_url or not isinstance(garment_image_url, str):
-                        garment_error = "Garment image URL is empty"
-                    elif os.path.exists(garment_image_url):
-                        with open(garment_image_url, "rb") as f:
-                            garment_bytes = f.read()
-                    elif (
-                        garment_image_url.startswith("garments/")
-                        or garment_image_url.startswith("scans/")
-                        or garment_image_url.startswith("user_photos/")
-                        or garment_image_url.startswith("tryon_results/")
-                    ):
-                        garment_bytes = download_image_from_storage(garment_image_url)
-                    elif (
-                        settings.supabase_url
-                        and settings.supabase_url in garment_image_url
-                        and ("/storage/v1/object/" in garment_image_url or f"/{settings.supabase_storage_bucket}/" in garment_image_url)
-                    ):
-                        # Extract the storage object key directly from the Supabase URL
-                        bucket_name = settings.supabase_storage_bucket
-                        clean_path = garment_image_url.split("?")[0]
-                        for prefix in (f"/storage/v1/object/public/{bucket_name}/", f"/storage/v1/object/sign/{bucket_name}/", f"/{bucket_name}/"):
-                            if prefix in clean_path:
-                                clean_path = clean_path.split(prefix, 1)[1]
-                                break
-                        try:
-                            garment_bytes = download_image_from_storage(clean_path)
-                        except Exception:
-                            signed = sign_if_private(garment_image_url)
-                            target_url = signed if (signed and signed != garment_image_url) else garment_image_url
-                            resp = await client.get(target_url)
-                            resp.raise_for_status()
-                            garment_bytes = resp.content
-                    elif garment_image_url.startswith("http://") or garment_image_url.startswith("https://"):
-                        try:
-                            resp = await client.get(garment_image_url)
-                            resp.raise_for_status()
-                            garment_bytes = resp.content
-                        except Exception as http_err:
-                            # If HTTP GET failed (e.g. 400 Bad Request on a Supabase URL or expired token), try signing or direct storage
-                            signed = sign_if_private(garment_image_url)
-                            if signed and signed != garment_image_url:
-                                resp = await client.get(signed)
-                                resp.raise_for_status()
-                                garment_bytes = resp.content
-                            elif settings.supabase_storage_bucket and f"/{settings.supabase_storage_bucket}/" in garment_image_url:
-                                clean_path = garment_image_url.split(f"/{settings.supabase_storage_bucket}/", 1)[1].split("?")[0]
-                                garment_bytes = download_image_from_storage(clean_path)
-                            else:
-                                raise http_err
-                    elif garment_image_url.startswith("data:"):
-                        import base64
-                        header, data = garment_image_url.split(",", 1)
-                        garment_bytes = base64.b64decode(data)
-                    elif garment_image_url.startswith("/"):
-                        full_url = f"{settings.supabase_url}{garment_image_url}" if settings.supabase_url else ""
-                        if full_url:
-                            resp = await client.get(full_url)
-                            resp.raise_for_status()
-                            garment_bytes = resp.content
-                    else:
-                        garment_bytes = retrieve_image_bytes_from_encrypted_ref(garment_image_url)
-                    timer.mark("2. Garment Image Downloaded")
-                except Exception as e:
-                    garment_error = str(e)
-                    print(f"Notice: Garment image retrieval error ({e})")
+                (user_bytes, user_error), (garment_bytes, garment_error) = await asyncio.gather(
+                    self._resolve_user_image(client, user_image_url),
+                    self._resolve_garment_image(client, garment_image_url),
+                )
+            timer.mark("1 & 2. User and Garment Images Downloaded Concurrently")
 
             if not user_bytes:
                 raise RuntimeError(f"User image could not be loaded: {user_error or 'image data is empty'}")
