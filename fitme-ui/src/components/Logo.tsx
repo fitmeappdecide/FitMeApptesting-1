@@ -1,6 +1,6 @@
 import React from 'react';
 import { Text, StyleSheet } from 'react-native';
-import { Colors } from '../constants/theme';
+import { Colors, Fonts } from '../constants/theme';
 
 interface LogoProps {
   size?: number;
@@ -17,7 +17,8 @@ export function Logo({ size = 28 }: LogoProps) {
 
 const styles = StyleSheet.create({
   logo: {
-    fontFamily: 'serif',
+    fontFamily: Fonts.displayRegular,
+    fontWeight: '400',
     letterSpacing: -0.5,
   },
   fitPart: {

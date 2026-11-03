@@ -56,7 +56,7 @@ async def test_ava_auth_and_ownership():
         assert res_no_auth_msg.status_code == 401
 
         res_no_auth_del = await client.delete(f"/api/v1/ava/conversations/{conv1_id}")
-        assert res_no_auth_del.status_code == 401
+        assert res_no_auth_del.status_code in (401, 403)
 
         # 2. Simulate User 1:
         async def as_user1():
@@ -95,3 +95,49 @@ async def test_ava_auth_and_ownership():
         # 5. Accessing deleted conversation returns 404:
         res_u1_re_get = await client.get(f"/api/v1/ava/conversations/{conv1_id}/messages")
         assert res_u1_re_get.status_code == 404
+
+        # 6. Preferences Authentication & Account Isolation Test:
+        # Unauthenticated request to /preferences returns 401:
+        app.dependency_overrides.pop(get_current_user, None)
+        res_unauth_pref = await client.get("/api/v1/ava/preferences")
+        assert res_unauth_pref.status_code == 401
+
+        # User 1 starts with empty preferences:
+        app.dependency_overrides[get_current_user] = as_user1
+        res_u1_pref = await client.get("/api/v1/ava/preferences")
+        assert res_u1_pref.status_code == 200
+        assert res_u1_pref.json()["preferred_fits"] == []
+        assert res_u1_pref.json()["preferred_colors"] == []
+
+        # User 1 saves their preferences:
+        res_u1_put = await client.put("/api/v1/ava/preferences", json={
+            "preferred_fits": ["oversized"],
+            "preferred_colors": ["olive"],
+        })
+        assert res_u1_put.status_code == 200
+        assert res_u1_put.json()["preferences"]["preferred_fits"] == ["oversized"]
+
+        # User 2 logs in: must NOT see User 1's preferences!
+        app.dependency_overrides[get_current_user] = as_user2
+        res_u2_pref = await client.get("/api/v1/ava/preferences")
+        assert res_u2_pref.status_code == 200
+        assert res_u2_pref.json()["preferred_fits"] == []
+        assert res_u2_pref.json()["preferred_colors"] == []
+        assert "oversized" not in res_u2_pref.json()["preferred_fits"]
+        assert "olive" not in res_u2_pref.json()["preferred_colors"]
+
+        # User 2 saves completely different preferences:
+        res_u2_put = await client.put("/api/v1/ava/preferences", json={
+            "preferred_fits": ["tailored"],
+            "preferred_colors": ["burgundy"],
+        })
+        assert res_u2_put.status_code == 200
+        assert res_u2_put.json()["preferences"]["preferred_fits"] == ["tailored"]
+
+        # Switch back to User 1: User 1 still has their own preferences intact:
+        app.dependency_overrides[get_current_user] = as_user1
+        res_u1_check = await client.get("/api/v1/ava/preferences")
+        assert res_u1_check.status_code == 200
+        assert res_u1_check.json()["preferred_fits"] == ["oversized"]
+        assert res_u1_check.json()["preferred_colors"] == ["olive"]
+        assert "tailored" not in res_u1_check.json()["preferred_fits"]

@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  ScrollView, Image, Animated, Alert, ActivityIndicator,
+  ScrollView, Image, Animated, Alert, ActivityIndicator, StatusBar, useWindowDimensions,
 } from 'react-native';
 import { useRouter, Link, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Logo } from '../../src/components/Logo';
 import { ProMemberBadge } from '../../src/components/ProMemberBadge';
 import { trendingProducts } from '../../src/data/mockData';
-import { Colors, Spacing, Radii } from '../../src/constants/theme';
+import { Colors, Spacing, Radii, Fonts } from '../../src/constants/theme';
 import { formatRetailerName, supportedPlatforms } from '../../src/constants/retailers';
 import { RetailerLogo } from '../../src/components/RetailerLogo';
 import { useSession } from '../../src/services/session';
@@ -20,6 +20,9 @@ import { CachedImage } from '../../src/components/CachedImage';
 import { productIntelligenceApi, PIHistoryItem, tryOnApi, TryOnHistoryItem } from '../../src/services/api';
 import { useLooksStore } from '../../src/services/looksStore';
 import { normalizeProductUrl } from '../../src/utils/url';
+
+// Feature flag: set to false to instantly revert to previous beige box hero
+const SHOW_EDITORIAL_HERO = true;
 
 function getComparisonImageUri(item: PIHistoryItem): string {
   if (!item) return 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80';
@@ -146,6 +149,21 @@ function getTryOnCardImageUri(item: any): string {
 }
 
 export default function Home() {
+  const insets = useSafeAreaInsets();
+  const { width: screenW } = useWindowDimensions();
+
+  // Hero image geometry, as fractions of screen width, measured for Hero-image1.PNG (1196x1315).
+  // Flush with the top and left edges (left: 0, top: 0) so the warm wall seamlessly
+  // flows behind the status bar, logo, and title without any seam or edge bands,
+  // while the bronze rack and hanging shirts bleed gracefully off the right edge of the screen.
+  const heroW = screenW * 1.15;
+  const heroH = heroW * (1315 / 1196);
+  const heroLeft = 0;
+  const heroTop = 0;
+  const pedestalBaseY = heroTop + heroH * (1250 / 1315);
+  // Header + title block height so the URL pill (marginTop 10) starts at the pedestal base.
+  const heroTextAreaHeight = pedestalBaseY - 10;
+
   const [url, setUrl] = useState('');
   const [recentComparisons, setRecentComparisons] = useState<PIHistoryItem[]>([]);
   const [cachedTryons, setCachedTryons] = useState<TryOnHistoryItem[]>([]);
@@ -332,112 +350,173 @@ export default function Home() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <View style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
 
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.logoRow}>
-            <Logo size={24} />
-            {isPremium && <ProMemberBadge variant="compact" />}
-          </View>
-          <Link href="/notifications" asChild>
-            <TouchableOpacity style={styles.bellBtn} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Ionicons name="notifications-outline" size={20} color={Colors.foreground} />
-            </TouchableOpacity>
-          </Link>
-        </View>
-
-        {/* Hero card */}
-        <View style={styles.heroCard}>
-          <Text style={styles.heroEyebrow}>AI TRY-ON</Text>
-          <Text style={styles.heroTitle}>See any outfit{'\n'}on you.</Text>
-          <Text style={styles.heroBody}>Paste a link. We extract, fit and render — in seconds.</Text>
-          <View style={[styles.urlRow, !!inlineMsg && { borderColor: Colors.destructive, borderWidth: 1 }]}>
-            <Ionicons name="link-outline" size={16} color={Colors.mutedForeground} style={{ marginLeft: 12 }} />
-            <TextInput
-              ref={urlInputRef}
-              style={styles.urlInput}
-              placeholder="Paste a product URL"
-              placeholderTextColor={Colors.mutedForeground}
-              value={url}
-              onChangeText={handleUrlChange}
-              autoCapitalize="none"
-              returnKeyType="go"
-              onSubmitEditing={handleTryOn}
-            />
-            <TouchableOpacity style={styles.tryBtn} onPress={handleTryOn} activeOpacity={0.85}>
-              <Text style={styles.tryBtnText}>Try{'\n'}on</Text>
-            </TouchableOpacity>
-          </View>
-          
-          {/* Inline validation/error message */}
-          {inlineMsg && (
-            <Animated.View style={[styles.inlineMsgRow, { opacity: fadeAnim }]}>
-              <Ionicons name="information-circle-outline" size={14} color={Colors.destructive} />
-              <Text style={styles.inlineMsgText}>{inlineMsg}</Text>
-            </Animated.View>
-          )}
-
-          {/* Manual photo upload row */}
-          <View style={styles.manualRow}>
-            <TouchableOpacity
-              style={styles.manualBtn}
-              onPress={takePhoto}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="camera-outline" size={16} color={Colors.accent} />
-              <Text style={styles.manualBtnText}>Take photo</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.manualBtn}
-              onPress={uploadPhoto}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="image-outline" size={16} color={Colors.accent} />
-              <Text style={styles.manualBtnText}>Upload photo</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Platforms */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>SUPPORTED ON</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsScroll}>
-            {supportedPlatforms.map((p) => (
-              <View key={p} style={styles.chip}>
-                <RetailerLogo retailer={p} size={14} />
-                <Text style={styles.chipText}>{p}</Text>
-              </View>
-            ))}
-          </ScrollView>
-        </View>
-
-        {/* Find this product banner card (Image 1) */}
-        <TouchableOpacity
-          style={styles.findProductCard}
-          onPress={() => router.push('/find-product' as any)}
-          activeOpacity={0.88}
-        >
-          <View style={styles.findProductLeft}>
-            <View style={styles.newBadge}>
-              <Text style={styles.newBadgeText}>NEW</Text>
-            </View>
-            <Text style={styles.findProductTitle}>Find this product</Text>
-            <Text style={styles.findProductSubtitle}>
-              Upload a garment photo or tag and find similar products instantly.
-            </Text>
-          </View>
-          <View style={styles.findProductRight}>
+        {SHOW_EDITORIAL_HERO ? (
+          /* Editorial Arch Hero (Image-2) */
+          <View style={styles.editorialHeroContainer}>
+            {/* Hero image positioned to match the Image-2 mockup (geometry measured from mockup) */}
             <Image
-              source={{ uri: 'https://images.unsplash.com/photo-1572804013309-59a88b7e92f1?auto=format&fit=crop&w=300&q=80' }}
-              style={styles.findProductImg}
+              source={require('../../assets/hero-image1.png')}
+              style={{ position: 'absolute', top: heroTop, left: heroLeft, width: heroW, height: heroH }}
+              resizeMode="cover"
             />
-            <View style={styles.findProductArrowBtn}>
-              <Ionicons name="arrow-forward" size={16} color={Colors.white} />
+
+
+            {/* Header + title area; height chosen so the URL pill sits at the pedestal base */}
+            <View style={{ minHeight: heroTextAreaHeight }}>
+              <View style={[styles.header, { paddingTop: Math.max(insets.top, 14), paddingHorizontal: Spacing.xl }]}>
+                <View style={styles.logoRow}>
+                  <Logo size={28} />
+                  {isPremium && <ProMemberBadge variant="compact" />}
+                </View>
+                <Link href="/notifications" asChild>
+                  <TouchableOpacity style={styles.bellBtn} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Ionicons name="notifications-outline" size={24} color={Colors.foreground} />
+                  </TouchableOpacity>
+                </Link>
+              </View>
+
+              {/* Editorial Title & Eyebrow */}
+              <View style={styles.editorialTextContent}>
+                <View style={styles.editorialEyebrowRow}>
+                  <Text style={styles.editorialEyebrow}>AI TRY-ON</Text>
+                  <View style={styles.editorialEyebrowLine} />
+                </View>
+                <View style={styles.editorialTitleGroup}>
+                  <Text style={styles.editorialTitle}>See it</Text>
+                  <Text style={styles.editorialTitleAccent}>on you.</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Floating URL Input Pill */}
+            <View style={[styles.editorialUrlPill, !!inlineMsg && { borderColor: Colors.destructive, borderWidth: 1 }]}>
+              <Ionicons name="link-outline" size={18} color={Colors.mutedForeground} style={{ marginLeft: 16 }} />
+              <TextInput
+                ref={urlInputRef}
+                style={styles.editorialUrlInput}
+                placeholder="Paste a product URL"
+                placeholderTextColor={Colors.mutedForeground}
+                value={url}
+                onChangeText={handleUrlChange}
+                autoCapitalize="none"
+                returnKeyType="go"
+                onSubmitEditing={handleTryOn}
+              />
+              <TouchableOpacity
+                style={styles.editorialArrowBtn}
+                onPress={handleTryOn}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Try on"
+              >
+                <Ionicons name="arrow-forward" size={18} color={Colors.primaryForeground} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Inline validation/error message */}
+            {inlineMsg && (
+              <Animated.View style={[styles.inlineMsgRow, { opacity: fadeAnim, marginHorizontal: Spacing.xl }]}>
+                <Ionicons name="information-circle-outline" size={14} color={Colors.destructive} />
+                <Text style={styles.inlineMsgText}>{inlineMsg}</Text>
+              </Animated.View>
+            )}
+
+            {/* Manual photo upload tiles: Take photo & Upload photo */}
+            <View style={styles.editorialActionRow}>
+              <TouchableOpacity
+                style={styles.editorialActionTile}
+                onPress={takePhoto}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Take photo"
+              >
+                <Ionicons name="camera-outline" size={24} color={Colors.accent} />
+                <Text style={styles.editorialActionTileText}>Take photo</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.editorialActionTile}
+                onPress={uploadPhoto}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Upload photo"
+              >
+                <Ionicons name="image-outline" size={24} color={Colors.accent} />
+                <Text style={styles.editorialActionTileText}>Upload photo</Text>
+              </TouchableOpacity>
             </View>
           </View>
-        </TouchableOpacity>
+        ) : (
+          /* Original Layout */
+          <>
+            <View style={[styles.header, { paddingTop: Math.max(insets.top, 14) }]}>
+              <View style={styles.logoRow}>
+                <Logo size={28} />
+                {isPremium && <ProMemberBadge variant="compact" />}
+              </View>
+              <Link href="/notifications" asChild>
+                <TouchableOpacity style={styles.bellBtn} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="notifications-outline" size={24} color={Colors.foreground} />
+                </TouchableOpacity>
+              </Link>
+            </View>
+
+            <View style={styles.heroCard}>
+              <Text style={styles.heroEyebrow}>AI TRY-ON</Text>
+              <Text style={styles.heroTitle}>See any outfit{'\n'}on you.</Text>
+              <Text style={styles.heroBody}>Paste a link. We extract, fit and render — in seconds.</Text>
+              <View style={[styles.urlRow, !!inlineMsg && { borderColor: Colors.destructive, borderWidth: 1 }]}>
+                <Ionicons name="link-outline" size={16} color={Colors.mutedForeground} style={{ marginLeft: 12 }} />
+                <TextInput
+                  ref={urlInputRef}
+                  style={styles.urlInput}
+                  placeholder="Paste a product URL"
+                  placeholderTextColor={Colors.mutedForeground}
+                  value={url}
+                  onChangeText={handleUrlChange}
+                  autoCapitalize="none"
+                  returnKeyType="go"
+                  onSubmitEditing={handleTryOn}
+                />
+                <TouchableOpacity style={styles.tryBtn} onPress={handleTryOn} activeOpacity={0.85}>
+                  <Text style={styles.tryBtnText}>Try{'\n'}on</Text>
+                </TouchableOpacity>
+              </View>
+              
+              {/* Inline validation/error message */}
+              {inlineMsg && (
+                <Animated.View style={[styles.inlineMsgRow, { opacity: fadeAnim }]}>
+                  <Ionicons name="information-circle-outline" size={14} color={Colors.destructive} />
+                  <Text style={styles.inlineMsgText}>{inlineMsg}</Text>
+                </Animated.View>
+              )}
+
+              {/* Manual photo upload row */}
+              <View style={styles.manualRow}>
+                <TouchableOpacity
+                  style={styles.manualBtn}
+                  onPress={takePhoto}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="camera-outline" size={16} color={Colors.accent} />
+                  <Text style={styles.manualBtnText}>Take photo</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.manualBtn}
+                  onPress={uploadPhoto}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="image-outline" size={16} color={Colors.accent} />
+                  <Text style={styles.manualBtnText}>Upload photo</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </>
+        )}
+
 
         {/* Recent try-ons */}
         <View style={styles.section}>
@@ -601,7 +680,7 @@ export default function Home() {
         </View>
 
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -617,10 +696,10 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: Spacing.md },
   logoRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
 
-  bellBtn: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
+  bellBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   heroCard: { backgroundColor: '#EFE4D7', borderRadius: Radii.xxl, padding: Spacing.xl, paddingTop: Spacing.xxl, marginBottom: Spacing.xl },
   heroEyebrow: { fontSize: 10, letterSpacing: 3, color: Colors.mutedForeground, textTransform: 'uppercase', marginBottom: 8 },
-  heroTitle: { fontFamily: 'serif', fontSize: 34, color: Colors.foreground, lineHeight: 40, marginBottom: 10 },
+  heroTitle: { fontFamily: Fonts.display, fontSize: 34, color: Colors.foreground, lineHeight: 40, marginBottom: 10 },
   heroBody: { fontSize: 13, color: Colors.mutedForeground, marginBottom: 18, lineHeight: 20 },
   urlRow: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.card,
@@ -639,13 +718,139 @@ const styles = StyleSheet.create({
     paddingVertical: 11, borderWidth: 1, borderColor: 'rgba(255,255,255,0.8)',
   },
   manualBtnText: { fontSize: 13, fontWeight: '500', color: Colors.foreground },
+
+  /* Editorial Arch Hero Styles (Image-2) */
+  editorialHeroContainer: {
+    marginHorizontal: -Spacing.xl,
+    position: 'relative',
+    paddingBottom: Spacing.md,
+    marginBottom: Spacing.xl,
+    overflow: 'hidden',
+  },
+  editorialHeroBgImage: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: '120%',
+    aspectRatio: 1086 / 1448,
+  },
+
+  editorialTextContent: {
+    paddingHorizontal: Spacing.xl,
+    paddingTop: 62,
+    paddingBottom: 4,
+    minHeight: 160,
+    justifyContent: 'flex-start',
+  },
+  editorialEyebrowRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  editorialEyebrow: {
+    fontSize: 10,
+    letterSpacing: 2.5,
+    color: Colors.mutedForeground,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+  },
+  editorialEyebrowLine: {
+    width: 24,
+    height: 1,
+    backgroundColor: Colors.mutedForeground,
+  },
+  editorialTitleGroup: {
+    gap: 0,
+  },
+  editorialTitle: {
+    fontFamily: Fonts.display,
+    fontSize: 46,
+    color: Colors.foreground,
+    lineHeight: 46,
+    letterSpacing: -0.5,
+  },
+  editorialTitleAccent: {
+    fontFamily: Fonts.displayItalic,
+    fontSize: 46,
+    color: Colors.accent,
+    lineHeight: 46,
+    letterSpacing: -0.5,
+    marginTop: -7,
+  },
+  editorialUrlPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.card,
+    marginHorizontal: Spacing.xl,
+    borderRadius: Radii.full,
+    height: 52,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    shadowColor: '#1A1410',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 4,
+    marginTop: 10,
+  },
+  editorialUrlInput: {
+    flex: 1,
+    fontSize: 13,
+    color: Colors.foreground,
+    paddingVertical: 10,
+    paddingLeft: 10,
+    paddingRight: 8,
+  },
+  editorialArrowBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 6,
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.20,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  editorialActionRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginHorizontal: Spacing.xl,
+    marginTop: 14,
+  },
+  editorialActionTile: {
+    flex: 1,
+    backgroundColor: Colors.card,
+    borderRadius: Radii.xl,
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    shadowColor: '#1A1410',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 1,
+  },
+  editorialActionTileText: {
+    fontSize: 12.5,
+    fontWeight: '500',
+    color: Colors.foreground,
+  },
+
   section: { marginBottom: Spacing.xxl },
   sectionLabel: { fontSize: 10, letterSpacing: 2, color: Colors.mutedForeground, textTransform: 'uppercase', marginBottom: 10 },
   chipsScroll: { marginHorizontal: -Spacing.xl, paddingHorizontal: Spacing.xl },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: Colors.card, borderRadius: Radii.full, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 12, paddingVertical: 7, marginRight: 8 },
   chipText: { fontSize: 12, color: Colors.foreground },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
-  sectionTitle: { fontFamily: 'serif', fontSize: 20, color: Colors.foreground },
+  sectionTitle: { fontFamily: Fonts.display, fontSize: 20, color: Colors.foreground },
   trendingTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   seeAllRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   seeAllText: { fontSize: 12, color: Colors.accent },
@@ -805,7 +1010,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   emptyTryonTitle: {
-    fontFamily: 'serif',
+    fontFamily: Fonts.display,
     fontSize: 15,
     fontWeight: '700',
     color: Colors.foreground,

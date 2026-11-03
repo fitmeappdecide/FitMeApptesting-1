@@ -9,8 +9,6 @@
     "userInterfaceStyle": "light",
 
     "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
       "backgroundColor": "#F7EFE7"
     },
     "ios": {
@@ -46,7 +44,14 @@
       [
         "expo-font",
         {
-          "fonts": []
+          "fonts": [
+            "./assets/fonts/CormorantGaramond_400Regular.ttf",
+            "./assets/fonts/CormorantGaramond_500Medium.ttf",
+            "./assets/fonts/CormorantGaramond_600SemiBold.ttf",
+            "./assets/fonts/CormorantGaramond_700Bold.ttf",
+            "./assets/fonts/CormorantGaramond_400Regular_Italic.ttf",
+            "./assets/fonts/CormorantGaramond_600SemiBold_Italic.ttf"
+          ]
         }
       ]
     ],

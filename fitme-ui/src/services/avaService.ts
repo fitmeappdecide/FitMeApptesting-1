@@ -3,7 +3,7 @@
  * Local-First: Persists and reads conversation history from local SQLite.
  */
 
-import { request, getAuthenticatedUserId, getSessionEpoch } from './api';
+import { request, getAuthenticatedUserId, getSessionEpoch, getBaseUrl, getValidAccessToken } from './api';
 import { DatabaseManager, AVARepository, LocalAVAConversation, LocalAVAMessage } from '../repositories';
 
 export interface AVAProductItem {
@@ -139,11 +139,135 @@ export async function sendAVAMessage(
         resp.intent
       );
     } catch (dbErr) {
-      console.warn('[avaService] SQLite persistence notice on send message:', dbErr);
+      console.log('[avaService] SQLite persistence notice on send message:', dbErr);
     }
   }
 
   return resp;
+}
+
+export type AVAStreamCallbacks = {
+  onToken: (chunk: string) => void;
+  onStatus?: (status: string) => void;
+  onOutfit?: (outfit: AVAOutfitCard) => void;
+  onDone?: (payload: AVAChatResponsePayload) => void;
+  onError?: (err: any) => void;
+};
+
+export async function streamAVAMessage(
+  message: string,
+  callbacks: AVAStreamCallbacks,
+  conversationId?: string,
+  selectedOutfit?: AVAOutfitCard,
+  imageBase64?: string
+): Promise<AVAChatResponsePayload> {
+  const activeUserId = getAuthenticatedUserId();
+  const currentEpoch = getSessionEpoch();
+
+  const payload = {
+    message,
+    conversation_id: conversationId || null,
+    selected_outfit: selectedOutfit || null,
+    image_base64: imageBase64 || null,
+  };
+
+  const currentBaseUrl = getBaseUrl();
+  const token = await getValidAccessToken();
+
+  let accumulatedText = '';
+  let discoveredOutfits: AVAOutfitCard[] = [];
+  let returnedConvId = conversationId;
+  let suggestedActions: string[] = [];
+
+  try {
+    const response = await fetch(`${currentBaseUrl}/api/v1/ava/chat/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const rawText = await response.text();
+    const lines = rawText.split('\n');
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('data: ')) {
+        try {
+          const data = JSON.parse(trimmed.slice(6));
+          if (data.event === 'start' && data.conversation_id) {
+            returnedConvId = data.conversation_id;
+          } else if (data.event === 'token' && data.chunk) {
+            accumulatedText += data.chunk;
+            callbacks.onToken(data.chunk);
+          } else if (data.event === 'status' && data.status) {
+            callbacks.onStatus?.(data.status);
+          } else if (data.event === 'outfit' && data.outfit) {
+            discoveredOutfits.push(data.outfit);
+            callbacks.onOutfit?.(data.outfit);
+          } else if (data.event === 'done') {
+            if (data.conversation_id) returnedConvId = data.conversation_id;
+            if (data.outfits && data.outfits.length > 0) discoveredOutfits = data.outfits;
+            if (data.suggested_actions) suggestedActions = data.suggested_actions;
+          }
+        } catch (_) {}
+      }
+    }
+  } catch (err: any) {
+    console.log('[streamAVAMessage] Fallback to standard request due to:', err?.message || err);
+    // Graceful fallback to standard request with simulated typing
+    const standardResp = await sendAVAMessage(message, conversationId, selectedOutfit, imageBase64);
+    const words = (standardResp.message || '').split(' ');
+    for (let i = 0; i < words.length; i++) {
+      const chunk = words[i] + (i < words.length - 1 ? ' ' : '');
+      callbacks.onToken(chunk);
+      await new Promise((r) => setTimeout(r, 15));
+    }
+    if (standardResp.outfits) {
+      for (const o of standardResp.outfits) {
+        callbacks.onOutfit?.(o);
+      }
+    }
+    callbacks.onDone?.(standardResp);
+    return standardResp;
+  }
+
+  const finalPayload: AVAChatResponsePayload = {
+    conversation_id: returnedConvId || conversationId || `conv_${Date.now()}`,
+    message: accumulatedText,
+    intent: 'gpt_stylist',
+    mode: 'gpt_stream',
+    outfits: discoveredOutfits,
+    tool_calls_log: [],
+    suggested_actions: suggestedActions,
+  };
+
+  if (activeUserId && DatabaseManager.getActiveUserId() === activeUserId) {
+    try {
+      const convId = finalPayload.conversation_id;
+      await AVARepository.createConversation(convId, 'Fashion Styling Session');
+      await AVARepository.addMessage(`usr_${Date.now()}`, convId, 'user', message);
+      await AVARepository.addMessage(
+        `ava_${Date.now()}`,
+        convId,
+        'ava',
+        finalPayload.message,
+        { outfits: finalPayload.outfits, suggested_actions: finalPayload.suggested_actions },
+        finalPayload.intent
+      );
+    } catch (dbErr) {
+      console.log('[avaService] SQLite persistence notice on stream message:', dbErr);
+    }
+  }
+
+  callbacks.onDone?.(finalPayload);
+  return finalPayload;
 }
 
 export async function getAVAConversations(): Promise<AVAConversationSummary[]> {
@@ -158,7 +282,7 @@ export async function getAVAConversations(): Promise<AVAConversationSummary[]> {
       const rows = await AVARepository.getConversations();
       localConvs = rows.map(mapLocalConversationToSummary);
     } catch (dbErr) {
-      console.warn('[avaService] SQLite read notice for conversations:', dbErr);
+      console.log('[avaService] SQLite read notice for conversations:', dbErr);
     }
   }
 
@@ -194,13 +318,13 @@ export async function getAVAConversations(): Promise<AVAConversationSummary[]> {
             );
           }
         } catch (dbSaveErr) {
-          console.warn('[avaService] SQLite save notice for conversations:', dbSaveErr);
+          console.log('[avaService] SQLite save notice for conversations:', dbSaveErr);
         }
       }
       return remoteConvs;
     }
   } catch (err: any) {
-    console.warn('[avaService] Remote conversation fetch notice, returning local history:', err?.message || err);
+    console.log('[avaService] Remote conversation fetch notice, returning local history:', err?.message || err);
   }
 
   return localConvs;
@@ -220,7 +344,7 @@ export async function getAVAMessages(
       const rows = await AVARepository.getMessages(conversationId);
       localMessages = rows.map(mapLocalMessageToItem);
     } catch (dbErr) {
-      console.warn('[avaService] SQLite read notice for messages:', dbErr);
+      console.log('[avaService] SQLite read notice for messages:', dbErr);
     }
   }
 
@@ -260,13 +384,13 @@ export async function getAVAMessages(
             );
           }
         } catch (dbSaveErr) {
-          console.warn('[avaService] SQLite save notice for messages:', dbSaveErr);
+          console.log('[avaService] SQLite save notice for messages:', dbSaveErr);
         }
       }
       return res;
     }
   } catch (err: any) {
-    console.warn('[avaService] Remote messages fetch notice, returning local messages:', err?.message || err);
+    console.log('[avaService] Remote messages fetch notice, returning local messages:', err?.message || err);
   }
 
   return {
@@ -284,7 +408,7 @@ export async function deleteAVAConversation(conversationId: string): Promise<{ s
     try {
       await AVARepository.deleteConversation(conversationId);
     } catch (dbErr) {
-      console.warn('[avaService] SQLite delete notice:', dbErr);
+      console.log('[avaService] SQLite delete notice:', dbErr);
     }
   }
 
@@ -293,8 +417,33 @@ export async function deleteAVAConversation(conversationId: string): Promise<{ s
       method: 'DELETE',
     });
   } catch (err: any) {
-    console.warn('[avaService] Remote conversation delete notice:', err?.message || err);
+    console.log('[avaService] Remote conversation delete notice:', err?.message || err);
     return { success: true };
   }
+}
+
+export interface AVAPreferences {
+  style_dna?: Record<string, number>;
+  preferred_colors?: string[];
+  disliked_colors?: string[];
+  disliked_items?: string[];
+  preferred_fits?: string[];
+  favorite_brands?: string[];
+  favorite_retailers?: string[];
+  budget_range_min?: number | null;
+  budget_range_max?: number | null;
+}
+
+export async function getAVAPreferences(): Promise<AVAPreferences> {
+  return await request<AVAPreferences>('/api/v1/ava/preferences', {
+    method: 'GET',
+  });
+}
+
+export async function updateAVAPreferences(preferences: Partial<AVAPreferences>): Promise<{ status: string; preferences: AVAPreferences }> {
+  return await request<{ status: string; preferences: AVAPreferences }>('/api/v1/ava/preferences', {
+    method: 'PUT',
+    body: JSON.stringify(preferences),
+  });
 }
 

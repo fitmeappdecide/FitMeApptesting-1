@@ -137,8 +137,6 @@ function CameraButton({ onPress }: { onPress: () => void }) {
         accessibilityLabel="Take or upload photo"
       >
         <Animated.View style={[styles.cameraOuterCircle, { transform: [{ scale: pressAnim }] }]}>
-          {/* Curved glass top reflection sheen */}
-          <View style={styles.cameraGlassSheen} pointerEvents="none" />
           <View style={styles.cameraInnerCircle}>
             <Ionicons name="camera-outline" size={26} color="#FFFFFF" />
           </View>
@@ -282,55 +280,65 @@ function CustomTabBar({ state, navigation }: any) {
     }
   };
 
+  const bottomOffset = Math.max(insets.bottom, Platform.OS === 'ios' ? 20 : 14);
+
   return (
-    <View style={[styles.barWrapper, { bottom: Math.max(insets.bottom, Platform.OS === 'ios' ? 20 : 14) }]}>
-      <View style={styles.bar}>
-        {/* Soft upper glass specular highlight reflection */}
-        <View style={styles.glassSheen} pointerEvents="none" />
-
-        {/* Animated Active Tab Glass Capsule */}
-        <Animated.View
-          style={[
-            styles.activeCapsule,
-            {
-              width: capsuleWidth,
-              opacity: capsuleOpacity,
-              transform: [{ translateX: capsuleX }],
-            },
-          ]}
-          pointerEvents="none"
-        >
-          {/* Inner specular gloss highlight */}
-          <View style={styles.activeCapsuleSheen} />
-        </Animated.View>
-
-        {tabs.map((tab, idx) => {
-          const active = currentRouteName === tab.name;
-
-          const tabItemNode = (
-            <TabButton
-              key={tab.name}
-              tab={tab}
-              active={active}
-              onPress={() => navigation.navigate(tab.name)}
-              onLayout={(e) => handleTabLayout(tab.name, e)}
-            />
-          );
-
-          // Render central raised camera button between Looks (idx 1) and Ava (idx 2)
-          if (idx === 1) {
-            return (
-              <React.Fragment key={tab.name}>
-                {tabItemNode}
-                <CameraButton onPress={handleCameraPress} />
-              </React.Fragment>
-            );
-          }
-
-          return tabItemNode;
-        })}
+    <>
+      {/* Soft background fade so scrolling content smoothly fades behind the floating bar */}
+      <View
+        pointerEvents="none"
+        style={[styles.bottomFadeMask, { height: bottomOffset + 70 }]}
+      >
+        <View style={[styles.fadeSlice, { backgroundColor: 'rgba(247, 239, 231, 0.0)' }]} />
+        <View style={[styles.fadeSlice, { backgroundColor: 'rgba(247, 239, 231, 0.25)' }]} />
+        <View style={[styles.fadeSlice, { backgroundColor: 'rgba(247, 239, 231, 0.55)' }]} />
+        <View style={[styles.fadeSlice, { backgroundColor: 'rgba(247, 239, 231, 0.82)' }]} />
+        <View style={[styles.fadeSlice, { backgroundColor: 'rgba(247, 239, 231, 0.98)', flex: 2 }]} />
       </View>
-    </View>
+
+      <View style={[styles.barWrapper, { bottom: bottomOffset }]}>
+        <View style={styles.bar}>
+          {/* Animated Active Tab Solid Capsule */}
+          <Animated.View
+            style={[
+              styles.activeCapsule,
+              {
+                width: capsuleWidth,
+                opacity: capsuleOpacity,
+                transform: [{ translateX: capsuleX }],
+              },
+            ]}
+            pointerEvents="none"
+          />
+
+          {tabs.map((tab, idx) => {
+            const active = currentRouteName === tab.name;
+
+            const tabItemNode = (
+              <TabButton
+                key={tab.name}
+                tab={tab}
+                active={active}
+                onPress={() => navigation.navigate(tab.name)}
+                onLayout={(e) => handleTabLayout(tab.name, e)}
+              />
+            );
+
+            // Render central raised camera button between Looks (idx 1) and Ava (idx 2)
+            if (idx === 1) {
+              return (
+                <React.Fragment key={tab.name}>
+                  {tabItemNode}
+                  <CameraButton onPress={handleCameraPress} />
+                </React.Fragment>
+              );
+            }
+
+            return tabItemNode;
+          })}
+        </View>
+      </View>
+    </>
   );
 }
 
@@ -344,6 +352,17 @@ export default function TabsLayout() {
 }
 
 const styles = StyleSheet.create({
+  bottomFadeMask: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 90,
+  },
+  fadeSlice: {
+    flex: 1,
+    width: '100%',
+  },
   barWrapper: {
     position: 'absolute',
     left: 0,
@@ -355,8 +374,8 @@ const styles = StyleSheet.create({
   bar: {
     position: 'relative',
     flexDirection: 'row',
-    // Translucent Liquid Glass Background
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 255, 255, 0.72)' : 'rgba(255, 255, 255, 0.88)',
+    // Fully solid white background - 100% opaque, no bleed-through
+    backgroundColor: '#FFFFFF',
     borderRadius: 36,
     paddingVertical: 6,
     paddingHorizontal: 6,
@@ -364,54 +383,32 @@ const styles = StyleSheet.create({
     maxWidth: 440,
     justifyContent: 'space-around',
     alignItems: 'center',
-    // Multi-stage Refined Specular Border
-    borderWidth: 1.2,
-    borderColor: 'rgba(255, 255, 255, 0.75)',
-    borderTopColor: 'rgba(255, 255, 255, 0.95)',
-    borderBottomColor: 'rgba(255, 255, 255, 0.40)',
-    // Subtle Deep Floating Shadow
+    // Clean subtle warm border
+    borderWidth: 1,
+    borderColor: '#E8E1D9',
+    // Soft floating shadow
     shadowColor: '#1A1410',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.12,
-    shadowRadius: 22,
-    elevation: 10,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.10,
+    shadowRadius: 18,
+    elevation: 8,
     overflow: 'visible',
   },
-  // Top glass refraction highlight
-  glassSheen: {
-    position: 'absolute',
-    top: 2,
-    left: 16,
-    right: 16,
-    height: 22,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.38)',
-  },
-  // Animated Active Tab Glass Capsule
+  // Animated Active Tab Capsule
   activeCapsule: {
     position: 'absolute',
     top: 6,
     bottom: 6,
     borderRadius: 24,
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 255, 255, 0.82)' : 'rgba(255, 255, 255, 0.94)',
+    backgroundColor: '#F5ECE3',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.90)',
-    borderTopColor: '#FFFFFF',
+    borderColor: '#EADFD4',
     shadowColor: '#C97352',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.10,
-    shadowRadius: 6,
-    elevation: 3,
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
     overflow: 'hidden',
-  },
-  activeCapsuleSheen: {
-    position: 'absolute',
-    top: 1,
-    left: 4,
-    right: 4,
-    height: 14,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.45)',
   },
   tabItem: {
     flex: 1,
@@ -448,28 +445,17 @@ const styles = StyleSheet.create({
     width: 66,
     height: 66,
     borderRadius: 33,
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 255, 255, 0.82)' : 'rgba(255, 255, 255, 0.94)',
+    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1.2,
-    borderColor: 'rgba(255, 255, 255, 0.85)',
-    borderTopColor: 'rgba(255, 255, 255, 0.98)',
-    borderBottomColor: 'rgba(255, 255, 255, 0.45)',
+    borderWidth: 1.5,
+    borderColor: '#E8E1D9',
     shadowColor: '#1A1410',
     shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.14,
-    shadowRadius: 10,
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
     elevation: 8,
     overflow: 'hidden',
-  },
-  cameraGlassSheen: {
-    position: 'absolute',
-    top: 2,
-    left: 8,
-    right: 8,
-    height: 20,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.40)',
   },
   cameraInnerCircle: {
     width: 52,

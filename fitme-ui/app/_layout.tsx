@@ -1,9 +1,23 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { useFonts } from 'expo-font';
 import { Colors } from '../src/constants/theme';
 
 export default function RootLayout() {
+  const [fontsLoaded] = useFonts({
+    'CormorantGaramond-Regular': require('../assets/fonts/CormorantGaramond_400Regular.ttf'),
+    'CormorantGaramond-Medium': require('../assets/fonts/CormorantGaramond_500Medium.ttf'),
+    'CormorantGaramond-SemiBold': require('../assets/fonts/CormorantGaramond_600SemiBold.ttf'),
+    'CormorantGaramond-Bold': require('../assets/fonts/CormorantGaramond_700Bold.ttf'),
+    'CormorantGaramond-Italic': require('../assets/fonts/CormorantGaramond_400Regular_Italic.ttf'),
+    'CormorantGaramond-SemiBoldItalic': require('../assets/fonts/CormorantGaramond_600SemiBold_Italic.ttf'),
+  });
+
+  if (!fontsLoaded) {
+    return null;
+  }
+
   return (
     <SafeAreaProvider>
       <StatusBar style="dark" backgroundColor={Colors.background} />

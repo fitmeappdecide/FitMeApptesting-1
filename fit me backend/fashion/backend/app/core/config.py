@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     runpod_endpoint_id: str = ""
     gpu_mode: Literal["runpod", "local", "aws"] = "runpod"
     anthropic_api_key: str = ""
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o"
     stripe_secret_key: str = ""
     firebase_credentials_path: str = "./firebase/fitme-3ac94-firebase-adminsdk-fbsvc-5ec19c616f.json"
     anonymous_website_user_email: str = "testtryon_user@example.com"

@@ -197,7 +197,7 @@ export async function loadStoredAuth(): Promise<boolean> {
   return !!accessToken;
 }
 
-async function getValidAccessToken(): Promise<string | null> {
+export async function getValidAccessToken(): Promise<string | null> {
   if (!accessToken) {
     accessToken = await SecureStore.getItemAsync(ACCESS_TOKEN_KEY);
     refreshToken = await SecureStore.getItemAsync(REFRESH_TOKEN_KEY);

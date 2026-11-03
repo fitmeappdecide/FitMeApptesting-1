@@ -276,7 +276,7 @@ export default function Looks() {
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               activeOpacity={0.7}
             >
-              <Ionicons name="ellipsis-horizontal" size={20} color={Colors.foreground} />
+              <Ionicons name="ellipsis-horizontal" size={24} color={Colors.foreground} />
             </TouchableOpacity>
           ) : null
         }
@@ -455,9 +455,9 @@ const styles = StyleSheet.create({
   },
 
   menuBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: "center",
     justifyContent: "center",
   },

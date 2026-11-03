@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Video, ResizeMode } from 'expo-av';
 import { AppHeader } from '../src/components/AppHeader';
-import { Colors, Spacing, Radii, Fonts } from '../src/constants/theme';
+import { Colors, Spacing, Radii } from '../src/constants/theme';
 import * as FileSystem from 'expo-file-system';
 import { useSession } from '../src/services/session';
 import { scanApi, tryOnApi, savedPhotosApi, ApiError } from '../src/services/api';
@@ -548,7 +548,7 @@ const styles = StyleSheet.create({
     marginTop: 0,
   },
   percentText: {
-    fontFamily: Fonts.display,
+    fontFamily: 'serif',
     fontSize: 38,
     lineHeight: 42,
     fontWeight: '600',
@@ -621,14 +621,14 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   tipQuote: {
-    fontFamily: Fonts.display,
+    fontFamily: 'serif',
     fontSize: 15,
     lineHeight: 21,
     color: '#2C2520',
   },
   tipQuoteItalic: {
     fontStyle: 'italic',
-    fontFamily: Fonts.display,
+    fontFamily: 'serif',
   },
   paginationRow: {
     flexDirection: 'row',
@@ -708,7 +708,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.xl,
   },
   errorTitle: {
-    fontFamily: Fonts.display,
+    fontFamily: 'serif',
     fontSize: 22,
     color: Colors.foreground,
     textAlign: 'center',

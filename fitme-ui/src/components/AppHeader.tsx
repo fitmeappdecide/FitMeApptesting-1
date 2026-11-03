@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing } from '../constants/theme';
+import { Colors, Spacing, Fonts } from '../constants/theme';
 
 interface AppHeaderProps {
   title?: string;
@@ -31,7 +31,7 @@ export function AppHeader({ title, back, onBack, right, showBell = true }: AppHe
     if (showBell && !back) {
       return (
         <TouchableOpacity style={styles.iconBtn} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Ionicons name="notifications-outline" size={20} color={Colors.foreground} />
+          <Ionicons name="notifications-outline" size={24} color={Colors.foreground} />
         </TouchableOpacity>
       );
     }
@@ -43,7 +43,7 @@ export function AppHeader({ title, back, onBack, right, showBell = true }: AppHe
       <View style={styles.side}>
         {back && (
           <TouchableOpacity onPress={handleBack} style={styles.iconBtn} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name="chevron-back" size={22} color={Colors.foreground} />
+            <Ionicons name="chevron-back" size={24} color={Colors.foreground} />
           </TouchableOpacity>
         )}
       </View>
@@ -78,15 +78,15 @@ const styles = StyleSheet.create({
   title: {
     flex: 1,
     textAlign: 'center',
-    fontSize: 16,
-    fontWeight: '500',
+    fontSize: 19,
+    fontWeight: '600',
     color: Colors.foreground,
-    fontFamily: 'serif',
+    fontFamily: Fonts.display,
   },
   iconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },

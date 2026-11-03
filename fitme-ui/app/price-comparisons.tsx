@@ -399,7 +399,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   emptyTitle: {
-    fontFamily: "serif",
+    fontFamily: 'serif',
     fontSize: 19,
     color: Colors.foreground,
     textAlign: "center",

@@ -119,19 +119,19 @@ export default function Profile() {
 
   /* Menu Handlers ─────────────────────────────────── */
   const handleSupport = () => {
-    Linking.openURL('mailto:support@fitmeapp.com?subject=Support%20Request').catch(() =>
-      Alert.alert('Error', 'Unable to open email client.'),
+    Linking.openURL('https://fitmefashion.com/contact').catch(() =>
+      Alert.alert('Error', 'Unable to open contact page.'),
     );
   };
 
   const handlePrivacy = () => {
-    Linking.openURL('https://fitmeapp.com/privacy').catch(() =>
+    Linking.openURL('https://fitmefashion.com/privacy-policy').catch(() =>
       Alert.alert('Error', 'Unable to open privacy policy.'),
     );
   };
 
   const handleTerms = () => {
-    Linking.openURL('https://fitmeapp.com/terms').catch(() =>
+    Linking.openURL('https://fitmefashion.com/terms-and-conditions').catch(() =>
       Alert.alert('Error', 'Unable to open terms of service.'),
     );
   };
@@ -150,7 +150,7 @@ export default function Profile() {
     if (isDeleting) return;
     Alert.alert(
       'Delete Account',
-      'This will permanently delete your account, photos, saved try-ons, and subscription history. This cannot be undone.',
+      'This will permanently delete your account, photos, saved try-ons, and personal data. This cannot be undone.\n\nWeb deletion info: https://fitmefashion.com/account-deletion',
       [
         { text: 'Cancel', style: 'cancel' },
         {

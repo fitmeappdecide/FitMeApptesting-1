@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 export const Colors = {
   background: '#F7EFE7',
   foreground: '#2C2520',
@@ -21,7 +23,12 @@ export const Colors = {
 };
 
 export const Fonts = {
-  display: 'serif',
+  display: 'CormorantGaramond-SemiBold',
+  displayRegular: 'CormorantGaramond-Regular',
+  displayMedium: 'CormorantGaramond-Medium',
+  displayItalic: 'CormorantGaramond-Italic',
+  displaySemiBoldItalic: 'CormorantGaramond-SemiBoldItalic',
+  displayBold: 'CormorantGaramond-Bold',
   sans: 'System',
 };
 

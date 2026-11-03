@@ -248,3 +248,33 @@ async def test_ava_end_to_end_workflow(async_db):
     # Step 4: Save look
     step4 = await agent.process_request("Save this look.", selected_outfit=cheaper_outfit)
     assert step4["intent"] == "save_outfit"
+
+
+@pytest.mark.asyncio
+async def test_ava_streaming_flow(async_db, monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "openai_api_key", "")
+    agent = AVAAgent(async_db)
+    events = []
+    async for sse_chunk in agent.process_request_stream("Suggest a date night outfit"):
+        events.append(sse_chunk)
+
+    assert len(events) > 0
+    # Must have start event
+    assert any("start" in e for e in events)
+    # Must have token events
+    assert any("token" in e for e in events)
+    # Must have done event
+    assert any("done" in e for e in events)
+
+
+@pytest.mark.asyncio
+async def test_ava_gpt_orchestrator_tool_execution(async_db):
+    tools = AVAToolSuite(async_db)
+    from app.services.ava.gpt_orchestrator import AVAGPTOrchestrator
+    orchestrator = AVAGPTOrchestrator(tools)
+
+    res = await orchestrator.execute_tool("search_fashion_products", {"query": "white linen shirt", "limit": 2})
+    assert res["status"] == "success"
+    assert "products" in res
+
