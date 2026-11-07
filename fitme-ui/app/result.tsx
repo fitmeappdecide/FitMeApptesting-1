@@ -27,9 +27,11 @@ import {
   getAuthenticatedUserId,
 } from '../src/services/api';
 import { useLooksStore } from '../src/services/looksStore';
+import { usePriceComparisonStore } from '../src/services/priceComparisonStore';
 import { DatabaseManager, LooksRepository } from '../src/repositories';
 import { openAffiliateProductUrl } from '../src/services/affiliate';
 import { shareImageWithText } from 'fitme-extraction';
+import { formatProductPrice } from '../src/utils/price';
 
 const FALLBACK_IMG =
   'https://images.unsplash.com/photo-1469334031218-e382a71b716b?auto=format&fit=crop&w=900&q=80';
@@ -88,13 +90,105 @@ function parseNumericPrice(priceStr?: string | number | null): number {
 
 export default function Result() {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
-  const params = useLocalSearchParams<{ jobId?: string; scanId?: string; autoCompare?: string }>();
+  const params = useLocalSearchParams<{
+    jobId?: string;
+    scanId?: string;
+    autoCompare?: string;
+    initialTitle?: string;
+    initialBrand?: string;
+    initialPlatform?: string;
+    initialResultUrl?: string;
+    initialGarmentUrl?: string;
+  }>();
   const sessionJobId = useSession((s) => s.tryOnJobId);
   const activeJobId = (params.jobId || sessionJobId) as string | undefined;
 
-  const [detail, setDetail] = useState<TryOnDetailResponse | null>(null);
-  const [isLoadingDetail, setIsLoadingDetail] = useState<boolean>(Boolean(activeJobId));
-  const [isSaved, setIsSaved] = useState<boolean>(false);
+  const [detail, setDetail] = useState<TryOnDetailResponse | null>(() => {
+    // 1. Instant Zustand store hydration
+    if (activeJobId) {
+      const state = useLooksStore.getState();
+      const storeMatch =
+        state.generatedLooks.find((l) => l.id === activeJobId) ||
+        state.savedLooks.find((l) => l.id === activeJobId);
+
+      if (storeMatch) {
+        return {
+          id: storeMatch.id,
+          user_id: '',
+          garment_id: storeMatch.garment_id || '',
+          status: storeMatch.status || 'completed',
+          result_image_urls:
+            storeMatch.result_image_urls && storeMatch.result_image_urls.length > 0
+              ? storeMatch.result_image_urls
+              : storeMatch.thumbnail_url
+              ? [storeMatch.thumbnail_url]
+              : params.initialResultUrl
+              ? [params.initialResultUrl]
+              : [],
+          is_saved: Boolean(storeMatch.is_saved),
+          saved_photo_id: storeMatch.saved_photo_id,
+          saved_photo_name: storeMatch.saved_photo_name,
+          created_at: storeMatch.created_at || new Date().toISOString(),
+          title:
+            storeMatch.title ||
+            params.initialTitle ||
+            (storeMatch.brand && storeMatch.brand !== 'FitMe'
+              ? `${storeMatch.brand} Look`
+              : storeMatch.saved_photo_name
+              ? `Look with ${storeMatch.saved_photo_name}`
+              : 'Virtual Look'),
+          brand: storeMatch.brand || params.initialBrand || 'FitMe',
+          platform: storeMatch.platform || params.initialPlatform,
+          garment_image_url:
+            params.initialGarmentUrl ||
+            storeMatch.thumbnail_url ||
+            storeMatch.result_image_urls?.[0] ||
+            null,
+        };
+      }
+    }
+
+    // 2. Instant Route Params hydration
+    if (params.initialTitle || params.initialBrand || params.initialResultUrl || params.initialGarmentUrl) {
+      return {
+        id: activeJobId || 'init_look',
+        user_id: '',
+        garment_id: '',
+        status: 'completed',
+        result_image_urls: params.initialResultUrl ? [params.initialResultUrl] : [],
+        is_saved: false,
+        created_at: new Date().toISOString(),
+        title: params.initialTitle || 'Virtual Look',
+        brand: params.initialBrand || 'FitMe',
+        platform: params.initialPlatform,
+        garment_image_url: params.initialGarmentUrl || params.initialResultUrl || null,
+      };
+    }
+
+    return null;
+  });
+
+  const [isLoadingDetail, setIsLoadingDetail] = useState<boolean>(() => {
+    if (!activeJobId) return false;
+    const state = useLooksStore.getState();
+    const storeMatch =
+      state.generatedLooks.find((l) => l.id === activeJobId) ||
+      state.savedLooks.find((l) => l.id === activeJobId);
+    if (storeMatch) return false;
+    if (params.initialResultUrl || params.initialTitle) return false;
+    return true;
+  });
+
+  const [isSaved, setIsSaved] = useState<boolean>(() => {
+    if (activeJobId) {
+      const state = useLooksStore.getState();
+      const storeMatch =
+        state.generatedLooks.find((l) => l.id === activeJobId) ||
+        state.savedLooks.find((l) => l.id === activeJobId);
+      if (storeMatch) return Boolean(storeMatch.is_saved);
+    }
+    return false;
+  });
 
   const [view, setView]         = useState<'original' | 'you'>('you');
   const [fullscreen, setFull]   = useState(false);
@@ -129,20 +223,41 @@ export default function Result() {
           state.savedLooks.find((l) => l.id === activeJobId);
 
         if (storeMatch && isMounted) {
-          setDetail({
+          setDetail((prev) => ({
             id: storeMatch.id,
-            user_id: currentAuthUserId || '',
-            garment_id: storeMatch.garment_id || '',
+            user_id: currentAuthUserId || prev?.user_id || '',
+            garment_id: storeMatch.garment_id || prev?.garment_id || '',
             status: storeMatch.status || 'completed',
-            result_image_urls: storeMatch.result_image_urls || [],
+            result_image_urls:
+              storeMatch.result_image_urls && storeMatch.result_image_urls.length > 0
+                ? storeMatch.result_image_urls
+                : prev?.result_image_urls || [],
             is_saved: Boolean(storeMatch.is_saved),
-            saved_photo_id: storeMatch.saved_photo_id,
-            saved_photo_name: storeMatch.saved_photo_name,
-            created_at: storeMatch.created_at || new Date().toISOString(),
-            title: storeMatch.title || 'Virtual Look',
-            brand: storeMatch.brand || 'FitMe',
-            platform: storeMatch.platform,
-          });
+            saved_photo_id: storeMatch.saved_photo_id ?? prev?.saved_photo_id,
+            saved_photo_name: storeMatch.saved_photo_name ?? prev?.saved_photo_name,
+            created_at: storeMatch.created_at || prev?.created_at || new Date().toISOString(),
+            title:
+              storeMatch.title ||
+              prev?.title ||
+              params.initialTitle ||
+              (storeMatch.brand && storeMatch.brand !== 'FitMe'
+                ? `${storeMatch.brand} Look`
+                : storeMatch.saved_photo_name
+                ? `Look with ${storeMatch.saved_photo_name}`
+                : 'Virtual Look'),
+            brand: storeMatch.brand || prev?.brand || params.initialBrand || 'FitMe',
+            platform: storeMatch.platform || prev?.platform || params.initialPlatform,
+            price: prev?.price,
+            product_url: prev?.product_url,
+            affiliate_url: prev?.affiliate_url,
+            garment_image_url:
+              prev?.garment_image_url ||
+              params.initialGarmentUrl ||
+              storeMatch.thumbnail_url ||
+              storeMatch.result_image_urls?.[0] ||
+              null,
+            garment_images: prev?.garment_images,
+          }));
           setIsSaved(Boolean(storeMatch.is_saved));
           setIsLoadingDetail(false);
           foundLocally = true;
@@ -161,7 +276,7 @@ export default function Result() {
           if (DatabaseManager.isDatabaseOpen()) {
             const localJob = await LooksRepository.getLookById(activeJobId!);
             if (localJob && localJob.user_id === currentAuthUserId && isMounted) {
-              setDetail({
+              setDetail((prev) => ({
                 id: localJob.server_id || localJob.local_id,
                 user_id: localJob.user_id,
                 garment_id: localJob.garment_id,
@@ -169,19 +284,34 @@ export default function Result() {
                 result_image_urls:
                   localJob.result_image_urls && localJob.result_image_urls.length > 0
                     ? localJob.result_image_urls
-                    : localJob.local_image_paths || [],
+                    : localJob.local_image_paths && localJob.local_image_paths.length > 0
+                    ? localJob.local_image_paths
+                    : prev?.result_image_urls || [],
                 is_saved: Boolean(localJob.is_saved),
-                saved_photo_id: localJob.saved_photo_id,
-                saved_photo_name: localJob.saved_photo_name,
+                saved_photo_id: localJob.saved_photo_id ?? prev?.saved_photo_id,
+                saved_photo_name: localJob.saved_photo_name ?? prev?.saved_photo_name,
                 created_at:
                   typeof localJob.created_at === 'number'
                     ? new Date(localJob.created_at).toISOString()
-                    : String(localJob.created_at || ''),
-                title: localJob.saved_photo_name
-                  ? `Look with ${localJob.saved_photo_name}`
-                  : 'Virtual Look',
-                brand: localJob.brand_id || 'FitMe',
-              });
+                    : String(localJob.created_at || prev?.created_at || ''),
+                title:
+                  prev?.title && prev.title !== 'Virtual Look'
+                    ? prev.title
+                    : params.initialTitle ||
+                      (localJob.saved_photo_name
+                        ? `Look with ${localJob.saved_photo_name}`
+                        : 'Virtual Look'),
+                brand:
+                  prev?.brand && prev.brand !== 'FitMe'
+                    ? prev.brand
+                    : params.initialBrand || localJob.brand_id || 'FitMe',
+                platform: prev?.platform || params.initialPlatform,
+                price: prev?.price,
+                product_url: prev?.product_url,
+                affiliate_url: prev?.affiliate_url,
+                garment_image_url: prev?.garment_image_url || params.initialGarmentUrl,
+                garment_images: prev?.garment_images,
+              }));
               setIsSaved(Boolean(localJob.is_saved));
               setIsLoadingDetail(false);
               foundLocally = true;
@@ -193,8 +323,8 @@ export default function Result() {
         console.log('[Result] Local look lookup notice:', localErr);
       }
 
-      // If no local record exists, show loading indicator while waiting for network
-      if (!foundLocally && isMounted) {
+      // If no local record exists and no params, show loading indicator while waiting for network
+      if (!foundLocally && !params.initialResultUrl && !params.initialTitle && isMounted) {
         setIsLoadingDetail(true);
       }
 
@@ -205,7 +335,13 @@ export default function Result() {
           // Account isolation check: ensure active user hasn't switched during transit
           const activeAfterFetch = getAuthenticatedUserId() || DatabaseManager.getActiveUserId();
           if (activeAfterFetch === currentAuthUserId) {
-            setDetail(res);
+            setDetail((prev) => ({
+              ...res,
+              title: res.title || prev?.title || params.initialTitle || 'Virtual Look',
+              brand: res.brand || prev?.brand || params.initialBrand || 'FitMe',
+              platform: res.platform || prev?.platform || params.initialPlatform,
+              garment_image_url: res.garment_image_url || prev?.garment_image_url || params.initialGarmentUrl,
+            }));
             setIsSaved(Boolean(res.is_saved));
           }
         }
@@ -231,6 +367,8 @@ export default function Result() {
   const RESULT_IMG =
     detail?.result_image_urls && detail.result_image_urls.length > 0 && detail.result_image_urls[0]
       ? detail.result_image_urls[0]
+      : params.initialResultUrl
+      ? params.initialResultUrl
       : resultImageUrls && resultImageUrls.length > 0 && resultImageUrls[0]
       ? resultImageUrls[0]
       : FALLBACK_IMG;
@@ -248,22 +386,21 @@ export default function Result() {
     garmentImageFromList ||
     extractedProduct?.imageUrl ||
     extractedProduct?.imageUrls?.[0] ||
-    FALLBACK_IMG;
+    params.initialGarmentUrl ||
+    (RESULT_IMG !== FALLBACK_IMG ? RESULT_IMG : FALLBACK_IMG);
 
   // Modal image follows fsView
   const modalImageUri = fsView === 'you' ? RESULT_IMG : PRODUCT_IMG;
 
   // Resolve product metadata
-  const productBrand = detail?.brand || extractedProduct?.brand || 'FitMe';
-  const productTitle = detail?.title || extractedProduct?.title || 'Virtual Look';
+  const productBrand = detail?.brand || params.initialBrand || extractedProduct?.brand || 'FitMe';
+  const productTitle = detail?.title || params.initialTitle || extractedProduct?.title || 'Virtual Look';
+  const shopUrl = detail?.affiliate_url || detail?.product_url || extractedProduct?.sourceUrl || null;
   const productPrice =
     detail?.price ||
     (extractedProduct?.price
-      ? extractedProduct.price.startsWith('₹') || extractedProduct.price.startsWith('$')
-        ? extractedProduct.price
-        : `₹${extractedProduct.price}`
+      ? formatProductPrice(extractedProduct.price, shopUrl)
       : null);
-  const shopUrl = detail?.affiliate_url || detail?.product_url || extractedProduct?.sourceUrl || null;
 
   // Resolve Compare Prices State & Candidates (Strictly On-Demand)
   const sessionScanId = useSession((s) => s.scanId);
@@ -380,6 +517,35 @@ export default function Result() {
           candidates: resolvedCandidates,
           bestCandidateId: calculatedBestId,
         };
+
+        // Record into Recent Price Comparisons store (using strictly extracted garment image, never on-model)
+        try {
+          const bestCand =
+            resolvedCandidates.find((c) => c.id === calculatedBestId) || resolvedCandidates[0];
+          const bestPrice =
+            bestCand && typeof bestCand.numericPrice === 'number' && bestCand.numericPrice < Infinity
+              ? bestCand.numericPrice
+              : null;
+          const bestRetailer = bestCand?.platform || null;
+
+          usePriceComparisonStore.getState().addComparison({
+            id: activeJobId || activeScanId || `comp_${Date.now()}`,
+            job_id: activeJobId,
+            scan_id: activeScanId,
+            title: productTitle && productTitle !== 'Virtual Look' ? productTitle : 'Product Item',
+            brand: productBrand && productBrand !== 'FitMe' ? productBrand : undefined,
+            garment_image_url:
+              PRODUCT_IMG !== FALLBACK_IMG
+                ? PRODUCT_IMG
+                : (params.initialGarmentUrl || PRODUCT_IMG),
+            best_price: bestPrice,
+            best_retailer: bestRetailer,
+            candidates: resolvedCandidates,
+            created_at: Date.now(),
+          });
+        } catch (storeErr) {
+          console.warn('[Result] Could not save comparison to store:', storeErr);
+        }
       } else {
         setComparisonState('error');
       }
@@ -569,7 +735,7 @@ export default function Result() {
         x: initialView === 'original' ? 0 : windowWidth,
         animated: false,
       });
-    }, 50);
+    }, Platform.OS === 'android' ? 100 : 50);
   }, [windowWidth]);
 
   const handleMomentumScrollEnd = useCallback((e: any) => {
@@ -610,7 +776,7 @@ export default function Result() {
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* Main image */}
         <View style={[styles.imgWrap, { height: Math.min(windowHeight * 0.46, 500) }]}>
-          {isLoadingDetail ? (
+          {isLoadingDetail && (view === 'you' ? RESULT_IMG === FALLBACK_IMG : PRODUCT_IMG === FALLBACK_IMG) ? (
             <View style={styles.loaderWrap}>
               <ActivityIndicator size="large" color={Colors.accent} />
             </View>
@@ -676,7 +842,7 @@ export default function Result() {
 
         {/* Product card */}
         <View style={styles.productCard}>
-          <Image source={{ uri: PRODUCT_IMG }} style={styles.productThumb} />
+          <CachedImage uri={PRODUCT_IMG} style={styles.productThumb} />
           <View style={styles.productInfo}>
             <Text style={styles.productBrand} numberOfLines={1}>{productBrand}</Text>
             <Text style={styles.productTitle} numberOfLines={2}>{productTitle}</Text>
@@ -685,7 +851,9 @@ export default function Result() {
                 <Text style={styles.productPrice}>{productPrice}</Text>
               ) : (
                 <Text style={[styles.productPrice, { color: Colors.mutedForeground, fontSize: 12 }]}>
-                  {detail?.platform ? formatRetailerName(detail.platform) : 'FitMe Collection'}
+                  {detail?.platform || params.initialPlatform
+                    ? formatRetailerName(detail?.platform || params.initialPlatform!)
+                    : (productBrand && productBrand !== 'FitMe' ? productBrand : 'FitMe Collection')}
                 </Text>
               )}
               <TouchableOpacity onPress={handleShop} activeOpacity={0.7}>
@@ -906,6 +1074,7 @@ export default function Result() {
             showsHorizontalScrollIndicator={false}
             showsVerticalScrollIndicator={false}
             onMomentumScrollEnd={handleMomentumScrollEnd}
+            onScrollEndDrag={handleMomentumScrollEnd}
             style={styles.fsPager}
           >
             {/* Page 0: ORIGINAL */}

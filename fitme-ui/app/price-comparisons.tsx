@@ -16,6 +16,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { AppHeader } from "../src/components/AppHeader";
 import { Colors, Spacing, Radii } from "../src/constants/theme";
 import { productIntelligenceApi, PIHistoryItem } from "../src/services/api";
+import { usePriceComparisonStore } from "../src/services/priceComparisonStore";
 
 const tabs = ["Compared", "Liked"] as const;
 type TabType = (typeof tabs)[number];
@@ -23,13 +24,18 @@ type TabType = (typeof tabs)[number];
 import { formatRetailerName } from "../src/constants/retailers";
 import { RetailerLogo } from "../src/components/RetailerLogo";
 
-function getComparisonImageUri(item: PIHistoryItem): string {
+function getComparisonImageUri(item: any): string {
   if (!item) return 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80';
 
-  // 1. Candidate product image matching the best retailer
+  // 1. Extracted garment image URL (from tryon result comparison)
+  if (item.garment_image_url && typeof item.garment_image_url === 'string' && item.garment_image_url.trim().length > 0) {
+    return item.garment_image_url.trim();
+  }
+
+  // 2. Candidate product image matching the best retailer
   if (item.candidates && item.candidates.length > 0) {
     const bestCand = item.candidates.find(
-      (c) => c.retailer?.toLowerCase() === item.best_retailer?.toLowerCase()
+      (c: any) => c.retailer?.toLowerCase() === item.best_retailer?.toLowerCase()
     );
     const bestImg = bestCand?.image_url || (bestCand as any)?.imageUrl || (bestCand as any)?.image;
     if (bestImg && typeof bestImg === 'string' && bestImg.trim().length > 0) {
@@ -45,13 +51,13 @@ function getComparisonImageUri(item: PIHistoryItem): string {
     }
   }
 
-  // 2. User's original uploaded image thumbnail (Base64)
+  // 3. User's original uploaded image thumbnail (Base64)
   if (item.thumbnail_b64 && typeof item.thumbnail_b64 === 'string' && item.thumbnail_b64.trim().length > 0) {
     const b64 = item.thumbnail_b64.trim();
     return b64.startsWith('data:') ? b64 : `data:image/jpeg;base64,${b64}`;
   }
 
-  // 3. User's original uploaded image (stored on Storage CDN or local)
+  // 4. User's original uploaded image (stored on Storage CDN or local)
   if (item.profile?.image_cdn_url && typeof item.profile.image_cdn_url === 'string') {
     return item.profile.image_cdn_url;
   }
@@ -59,35 +65,32 @@ function getComparisonImageUri(item: PIHistoryItem): string {
     return item.profile.image_url;
   }
 
-  // 4. Direct item image fields
+  // 5. Direct item image fields
   if ((item as any).image_url && typeof (item as any).image_url === 'string') {
     return (item as any).image_url;
   }
   if ((item as any).thumbnail_url && typeof (item as any).thumbnail_url === 'string') {
     return (item as any).thumbnail_url;
   }
-  if ((item as any).garment_image_url && typeof (item as any).garment_image_url === 'string') {
-    return (item as any).garment_image_url;
-  }
 
-  // 5. High-quality fashion fallback
+  // 6. High-quality fashion fallback
   return 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80';
 }
 
-function getComparisonTitle(item: PIHistoryItem): string {
+function getComparisonTitle(item: any): string {
   if (item.candidates && item.candidates.length > 0) {
     const bestCand = item.candidates.find(
-      (c) => c.retailer?.toLowerCase() === item.best_retailer?.toLowerCase()
+      (c: any) => c.retailer?.toLowerCase() === item.best_retailer?.toLowerCase()
     );
     if (bestCand?.title) return bestCand.title;
     if (item.candidates[0]?.title) return item.candidates[0].title;
   }
-  return item.profile?.detected_title || item.match_label || "Garment Item";
+  return item.profile?.detected_title || item.match_label || item.title || "Garment Item";
 }
 
 export default function PriceComparisonsScreen() {
   const [tab, setTab] = useState<TabType>("Compared");
-  const [items, setItems] = useState<PIHistoryItem[]>([]);
+  const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const router = useRouter();
@@ -97,14 +100,24 @@ export default function PriceComparisonsScreen() {
       if (isRefresh) setRefreshing(true);
       else setLoading(true);
 
-      const res = await productIntelligenceApi.getHistory({
-        status: "done",
-        saved_only: tab === "Liked",
-        limit: 50,
-      });
-      if (Array.isArray(res)) {
-        setItems(res);
-      }
+      const storeItems = usePriceComparisonStore.getState().comparisons || [];
+      const formattedItems: any[] = storeItems.map((item) => ({
+        scan_id: item.scan_id || item.id,
+        id: item.id,
+        garment_image_url: item.garment_image_url,
+        best_price: item.best_price,
+        best_retailer: item.best_retailer,
+        is_saved: item.is_saved,
+        match_label: item.title,
+        candidates: item.candidates,
+        created_at: item.created_at,
+      }));
+
+      const activeItems = tab === "Liked"
+        ? formattedItems.filter((i) => i.is_saved)
+        : formattedItems;
+
+      setItems(activeItems);
     } catch (err) {
       console.warn("Could not load price comparisons history:", err);
     } finally {
@@ -125,11 +138,11 @@ export default function PriceComparisonsScreen() {
       setItems((prev) =>
         prev
           .map((item) =>
-            item.scan_id === scanId ? { ...item, is_saved: !item.is_saved } : item
+            item.scan_id === scanId || item.id === scanId ? { ...item, is_saved: !item.is_saved } : item
           )
           .filter((item) => (tab === "Liked" ? item.is_saved : true))
       );
-      await productIntelligenceApi.toggleSave(scanId);
+      await usePriceComparisonStore.getState().toggleSave(scanId);
     } catch (err) {
       console.warn("Could not toggle save on comparison:", err);
       loadData();
@@ -148,7 +161,7 @@ export default function PriceComparisonsScreen() {
           onPress: async () => {
             try {
               setLoading(true);
-              await productIntelligenceApi.clearAllHistory();
+              await usePriceComparisonStore.getState().clearAll();
               setItems([]);
             } catch (err) {
               console.warn("Could not clear comparisons history:", err);
@@ -173,12 +186,9 @@ export default function PriceComparisonsScreen() {
           style: "destructive",
           onPress: async () => {
             const previousItems = [...items];
-            setItems((prev) => prev.filter((item) => item.scan_id !== scanId));
+            setItems((prev) => prev.filter((item) => item.scan_id !== scanId && item.id !== scanId));
             try {
-              const res = await productIntelligenceApi.deleteHistory(scanId);
-              if (!res || (res.deleted !== undefined && res.deleted === 0)) {
-                setItems(previousItems);
-              }
+              await usePriceComparisonStore.getState().deleteComparison(scanId);
             } catch (err) {
               console.warn("Could not delete comparison item:", err);
               setItems(previousItems);
@@ -193,12 +203,12 @@ export default function PriceComparisonsScreen() {
   const leftItems = items.filter((_, i) => i % 2 === 0);
   const rightItems = items.filter((_, i) => i % 2 === 1);
 
-  const ComparisonCard = ({ item }: { item: PIHistoryItem }) => (
-    <Link href={`/find-product/results?scanId=${item.scan_id}` as any} asChild>
+  const ComparisonCard = ({ item }: { item: any }) => (
+    <Link href={`/find-product/results?comparisonId=${item.scan_id || item.id}` as any} asChild>
       <TouchableOpacity
         style={styles.masonryCard}
         activeOpacity={0.85}
-        onLongPress={() => handlePromptDeleteIndividual(item.scan_id)}
+        onLongPress={() => handlePromptDeleteIndividual(item.scan_id || item.id)}
         delayLongPress={400}
       >
         <Image
@@ -211,7 +221,7 @@ export default function PriceComparisonsScreen() {
               {getComparisonTitle(item)}
             </Text>
             <TouchableOpacity
-              onPress={() => handleToggleSave(item.scan_id)}
+              onPress={() => handleToggleSave(item.scan_id || item.id)}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               activeOpacity={0.7}
             >
@@ -309,20 +319,20 @@ export default function PriceComparisonsScreen() {
             </Text>
             <Text style={styles.emptyBody}>
               {tab === "Compared"
-                ? "Find a garment photo and compare prices across stores."
+                ? "Tap 'Compare Prices' on any generated try-on to see results here."
                 : "Tap the heart on any comparison to save it here."}
             </Text>
             <TouchableOpacity
               style={styles.primaryBtn}
               onPress={() =>
                 tab === "Compared"
-                  ? router.push("/find-product" as any)
+                  ? router.push("/looks" as any)
                   : setTab("Compared")
               }
               activeOpacity={0.85}
             >
               <Text style={styles.primaryBtnText}>
-                {tab === "Compared" ? "Find a Product" : "View Comparisons"}
+                {tab === "Compared" ? "View Recent Looks" : "View Comparisons"}
               </Text>
             </TouchableOpacity>
           </View>

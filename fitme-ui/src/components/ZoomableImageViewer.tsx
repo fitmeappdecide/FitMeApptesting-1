@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { View, PanResponder, Animated, StyleSheet, useWindowDimensions } from 'react-native';
+import { View, PanResponder, Animated, StyleSheet, useWindowDimensions, Pressable } from 'react-native';
 import { CachedImage } from './CachedImage';
 
 interface ZoomableImageViewerProps {
@@ -39,14 +39,14 @@ export function ZoomableImageViewer({ uri, onZoomChange }: ZoomableImageViewerPr
   const lastTapPos = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
-    const scaleSub = scale.addListener(({ value }) => {
+    const scaleSub = scale.addListener(({ value }: { value: number }) => {
       scaleVal.current = value;
       onZoomChange?.(value > 1.05);
     });
-    const txSub = translateX.addListener(({ value }) => {
+    const txSub = translateX.addListener(({ value }: { value: number }) => {
       translateXVal.current = value;
     });
-    const tySub = translateY.addListener(({ value }) => {
+    const tySub = translateY.addListener(({ value }: { value: number }) => {
       translateYVal.current = value;
     });
 
@@ -133,11 +133,47 @@ export function ZoomableImageViewer({ uri, onZoomChange }: ZoomableImageViewerPr
     }
   };
 
+  const handlePress = (evt: any) => {
+    // When zoomed in, panResponder handles double-tap to reset
+    if (scaleVal.current > 1.05) return;
+    const now = Date.now();
+    const prevTime = lastTapTime.current;
+    const prevPos = lastTapPos.current;
+    const t = evt.nativeEvent;
+
+    if (
+      prevPos &&
+      now - prevTime < DOUBLE_TAP_DELAY &&
+      Math.hypot(t.pageX - prevPos.x, t.pageY - prevPos.y) < DOUBLE_TAP_MAX_DISTANCE
+    ) {
+      handleDoubleTap(t.pageX, t.pageY);
+      lastTapTime.current = 0;
+      lastTapPos.current = null;
+    } else {
+      lastTapTime.current = now;
+      lastTapPos.current = { x: t.pageX, y: t.pageY };
+    }
+  };
+
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderTerminationRequest: () => false,
+      // Claim immediately on touch-down ONLY if pinching (2 fingers)
+      onStartShouldSetPanResponderCapture: (evt) => {
+        return evt.nativeEvent.touches.length > 1;
+      },
+      // When 1 finger on screen, only claim on touch-down if already zoomed in (to pan)
+      onStartShouldSetPanResponder: (evt) => {
+        return scaleVal.current > 1.05 || evt.nativeEvent.touches.length > 1;
+      },
+      // Capture move gestures ONLY when zoomed in (to pan) or pinching (2 fingers)
+      // When not zoomed, returns false so parent horizontal ScrollView swipes freely on Android & iOS
+      onMoveShouldSetPanResponder: (evt) => {
+        return scaleVal.current > 1.05 || evt.nativeEvent.touches.length > 1;
+      },
+      // When not zoomed, allow parent ScrollView to take over touches
+      onPanResponderTerminationRequest: () => {
+        return scaleVal.current <= 1.05;
+      },
 
       onPanResponderGrant: (evt) => {
         const touches = evt.nativeEvent.touches;
@@ -276,24 +312,26 @@ export function ZoomableImageViewer({ uri, onZoomChange }: ZoomableImageViewerPr
 
   return (
     <View style={styles.container} {...panResponder.panHandlers}>
-      <Animated.View
-        style={[
-          styles.imageContainer,
-          {
-            transform: [
-              { translateX },
-              { translateY },
-              { scale },
-            ],
-          },
-        ]}
-      >
-        <CachedImage
-          uri={uri}
-          style={{ width: windowWidth, height: windowHeight * 0.75 }}
-          resizeMode="contain"
-        />
-      </Animated.View>
+      <Pressable style={styles.pressable} onPress={handlePress}>
+        <Animated.View
+          style={[
+            styles.imageContainer,
+            {
+              transform: [
+                { translateX },
+                { translateY },
+                { scale },
+              ],
+            },
+          ]}
+        >
+          <CachedImage
+            uri={uri}
+            style={{ width: windowWidth, height: windowHeight * 0.75 }}
+            resizeMode="contain"
+          />
+        </Animated.View>
+      </Pressable>
     </View>
   );
 }
@@ -306,6 +344,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
+  },
+  pressable: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   imageContainer: {
     width: '100%',

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  ScrollView, Image, Animated, Alert, ActivityIndicator, StatusBar, useWindowDimensions,
+  ScrollView, Image, Animated, Alert, ActivityIndicator, StatusBar, useWindowDimensions, Keyboard,
 } from 'react-native';
 import { useRouter, Link, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -19,24 +19,35 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CachedImage } from '../../src/components/CachedImage';
 import { productIntelligenceApi, PIHistoryItem, tryOnApi, TryOnHistoryItem } from '../../src/services/api';
 import { useLooksStore } from '../../src/services/looksStore';
+import { usePriceComparisonStore } from '../../src/services/priceComparisonStore';
 import { normalizeProductUrl } from '../../src/utils/url';
 
 // Feature flag: set to false to instantly revert to previous beige box hero
 const SHOW_EDITORIAL_HERO = true;
 
-function getComparisonImageUri(item: PIHistoryItem): string {
+function getComparisonImageUri(item: any): string {
   if (!item) return 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80';
 
-  // 1. Candidate product image matching the best retailer
+  // 1. Extracted garment image (STRICT PRIORITY - never on-model try-on result)
+  if (item.garment_image_url && typeof item.garment_image_url === 'string' && item.garment_image_url.trim().length > 0) {
+    return item.garment_image_url.trim();
+  }
+  if (item.product_image_url && typeof item.product_image_url === 'string' && item.product_image_url.trim().length > 0) {
+    return item.product_image_url.trim();
+  }
+  if (item.image_url && typeof item.image_url === 'string' && item.image_url.trim().length > 0) {
+    return item.image_url.trim();
+  }
+
+  // 2. Candidate product image matching the best retailer
   if (item.candidates && item.candidates.length > 0) {
     const bestCand = item.candidates.find(
-      (c) => c.retailer?.toLowerCase() === item.best_retailer?.toLowerCase()
+      (c: any) => (c.retailer || c.platform)?.toLowerCase() === item.best_retailer?.toLowerCase()
     );
-    const bestImg = bestCand?.image_url || (bestCand as any)?.imageUrl || (bestCand as any)?.image;
+    const bestImg = bestCand?.image_url || bestCand?.imageUrl || bestCand?.image;
     if (bestImg && typeof bestImg === 'string' && bestImg.trim().length > 0) {
       return bestImg.trim();
     }
-
     // Any candidate with a valid image URL
     for (const c of item.candidates) {
       const candImg = c.image_url || (c as any)?.imageUrl || (c as any)?.image;
@@ -46,13 +57,13 @@ function getComparisonImageUri(item: PIHistoryItem): string {
     }
   }
 
-  // 2. User's original uploaded image thumbnail (Base64)
+  // 3. User's original uploaded image thumbnail (Base64)
   if (item.thumbnail_b64 && typeof item.thumbnail_b64 === 'string' && item.thumbnail_b64.trim().length > 0) {
     const b64 = item.thumbnail_b64.trim();
     return b64.startsWith('data:') ? b64 : `data:image/jpeg;base64,${b64}`;
   }
 
-  // 3. User's original uploaded image (stored on Storage CDN or local)
+  // 4. User's original uploaded image (stored on Storage CDN or local)
   if (item.profile?.image_cdn_url && typeof item.profile.image_cdn_url === 'string') {
     return item.profile.image_cdn_url;
   }
@@ -60,25 +71,17 @@ function getComparisonImageUri(item: PIHistoryItem): string {
     return item.profile.image_url;
   }
 
-  // 4. Direct item image fields
-  if ((item as any).image_url && typeof (item as any).image_url === 'string') {
-    return (item as any).image_url;
-  }
-  if ((item as any).thumbnail_url && typeof (item as any).thumbnail_url === 'string') {
-    return (item as any).thumbnail_url;
-  }
-  if ((item as any).garment_image_url && typeof (item as any).garment_image_url === 'string') {
-    return (item as any).garment_image_url;
-  }
-
   // 5. High-quality fashion fallback
   return 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80';
 }
 
-function getComparisonTitle(item: PIHistoryItem): string {
+function getComparisonTitle(item: any): string {
+  if (item.title && typeof item.title === 'string' && item.title.trim().length > 0) {
+    return item.title.trim();
+  }
   if (item.candidates && item.candidates.length > 0) {
     const bestCand = item.candidates.find(
-      (c) => c.retailer?.toLowerCase() === item.best_retailer?.toLowerCase()
+      (c: any) => (c.retailer || c.platform)?.toLowerCase() === item.best_retailer?.toLowerCase()
     );
     if (bestCand?.title) return bestCand.title;
     if (item.candidates[0]?.title) return item.candidates[0].title;
@@ -165,7 +168,8 @@ export default function Home() {
   const heroTextAreaHeight = pedestalBaseY - 10;
 
   const [url, setUrl] = useState('');
-  const [recentComparisons, setRecentComparisons] = useState<PIHistoryItem[]>([]);
+  const storedComparisons = usePriceComparisonStore((s) => s.comparisons);
+  const recentComparisons = storedComparisons.slice(0, 4);
   const [cachedTryons, setCachedTryons] = useState<TryOnHistoryItem[]>([]);
   const { generatedLooks, savedLooks, fetchLooks, toggleSave: toggleLookSave, loading: looksLoading } = useLooksStore();
 
@@ -222,12 +226,37 @@ export default function Home() {
     }
   }, [params.error]);
 
-  // Keep local cachedTryons in sync with store
+  // One-time cleanup: wipe legacy visual-search comparison history so it starts 100% fresh
+  useEffect(() => {
+    async function purgeLegacyComparisons() {
+      try {
+        const isPurged = await AsyncStorage.getItem('fitme_legacy_comparisons_purged_v2');
+        if (!isPurged) {
+          await usePriceComparisonStore.getState().clearAll();
+          await AsyncStorage.removeItem('fitme_home_recent_comparisons');
+          await AsyncStorage.setItem('fitme_legacy_comparisons_purged_v2', 'true');
+        }
+      } catch (e) {
+        console.warn('Could not purge legacy comparisons:', e);
+      }
+    }
+    purgeLegacyComparisons();
+  }, []);
+
+  // Keep local cachedTryons in sync with store while preserving titles & platforms
   useEffect(() => {
     const list = generatedLooks.length > 0 ? generatedLooks : savedLooks;
     if (list.length > 0) {
-      setCachedTryons(list.slice(0, 8));
-      AsyncStorage.setItem('fitme_home_recent_tryons', JSON.stringify(list.slice(0, 8))).catch(() => {});
+      setCachedTryons((prev) => {
+        const prevMap = new Map(prev.map((item) => [item.id, item]));
+        const merged = list.slice(0, 8).map((item) => ({
+          ...item,
+          title: item.title || prevMap.get(item.id)?.title || null,
+          platform: item.platform || prevMap.get(item.id)?.platform || null,
+        }));
+        AsyncStorage.setItem('fitme_home_recent_tryons', JSON.stringify(merged)).catch(() => {});
+        return merged;
+      });
     }
   }, [generatedLooks, savedLooks]);
 
@@ -236,19 +265,10 @@ export default function Home() {
     let isMounted = true;
     async function loadFromCache() {
       try {
-        const [cachedComp, cachedTry] = await Promise.all([
-          AsyncStorage.getItem('fitme_home_recent_comparisons'),
-          AsyncStorage.getItem('fitme_home_recent_tryons'),
-        ]);
-        if (isMounted) {
-          if (cachedComp) {
-            const p = JSON.parse(cachedComp);
-            if (Array.isArray(p)) setRecentComparisons(p);
-          }
-          if (cachedTry) {
-            const t = JSON.parse(cachedTry);
-            if (Array.isArray(t)) setCachedTryons(t);
-          }
+        const cachedTry = await AsyncStorage.getItem('fitme_home_recent_tryons');
+        if (isMounted && cachedTry) {
+          const t = JSON.parse(cachedTry);
+          if (Array.isArray(t)) setCachedTryons(t);
         }
       } catch (e) {
         // Cache read error ignored
@@ -264,30 +284,9 @@ export default function Home() {
 
   useFocusEffect(
     useCallback(() => {
-      let isMounted = true;
-      async function loadHomeData() {
-        try {
-          await Promise.allSettled([
-            fetchLooks(false).catch((err) => {
-              console.log('[Home] Recent try-ons load status:', err?.message || err);
-            }),
-            productIntelligenceApi.getHistory({ status: 'done', limit: 4 }).then((compData) => {
-              if (isMounted && Array.isArray(compData)) {
-                setRecentComparisons(compData);
-                AsyncStorage.setItem('fitme_home_recent_comparisons', JSON.stringify(compData)).catch(() => {});
-              }
-            }).catch((err) => {
-              console.log('[Home] Recent comparisons load status:', err?.message || err);
-            }),
-          ]);
-        } catch (err) {
-          console.log('[Home] Data load status:', err);
-        }
-      }
-      loadHomeData();
-      return () => {
-        isMounted = false;
-      };
+      fetchLooks(false).catch((err) => {
+        console.log('[Home] Recent try-ons load status:', err?.message || err);
+      });
     }, [fetchLooks])
   );
 
@@ -305,7 +304,17 @@ export default function Home() {
     }
   };
 
+  const handleClearUrl = () => {
+    setUrl('');
+    if (inlineMsg) {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      fadeAnim.setValue(0);
+      setInlineMsg(null);
+    }
+  };
+
   const handleTryOn = () => {
+    Keyboard.dismiss();
     const normalized = normalizeProductUrl(url);
     if (!normalized || !/^https?:\/\//i.test(normalized)) {
       showMessage('Please paste a product link to continue.');
@@ -352,7 +361,7 @@ export default function Home() {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+      <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.scroll}>
 
         {SHOW_EDITORIAL_HERO ? (
           /* Editorial Arch Hero (Image-2) */
@@ -406,6 +415,18 @@ export default function Home() {
                 returnKeyType="go"
                 onSubmitEditing={handleTryOn}
               />
+              {url.length > 0 && (
+                <TouchableOpacity
+                  style={styles.editorialClearBtn}
+                  onPress={handleClearUrl}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear URL"
+                >
+                  <Ionicons name="close" size={13} color={Colors.mutedForeground} />
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
                 style={styles.editorialArrowBtn}
                 onPress={handleTryOn}
@@ -481,6 +502,18 @@ export default function Home() {
                   returnKeyType="go"
                   onSubmitEditing={handleTryOn}
                 />
+                {url.length > 0 && (
+                  <TouchableOpacity
+                    style={styles.editorialClearBtn}
+                    onPress={handleClearUrl}
+                    activeOpacity={0.7}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear URL"
+                  >
+                    <Ionicons name="close" size={13} color={Colors.mutedForeground} />
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity style={styles.tryBtn} onPress={handleTryOn} activeOpacity={0.85}>
                   <Text style={styles.tryBtnText}>Try{'\n'}on</Text>
                 </TouchableOpacity>
@@ -551,13 +584,27 @@ export default function Home() {
               {recentTryons.map((p) => {
                 const imgUri = getTryOnCardImageUri(p);
                 return (
-                  <Link href={{ pathname: '/result', params: { jobId: p.id } } as any} key={p.id} asChild>
+                  <Link
+                    href={{
+                      pathname: '/result',
+                      params: {
+                        jobId: p.id,
+                        initialTitle: p.title || (p.brand && p.brand !== 'FitMe' ? `${p.brand} Look` : (p.saved_photo_name ? `Look with ${p.saved_photo_name}` : '')),
+                        initialBrand: p.brand || '',
+                        initialPlatform: p.platform || '',
+                        initialResultUrl: p.result_image_urls?.[0] || p.thumbnail_url || imgUri || '',
+                        initialGarmentUrl: p.thumbnail_url || p.result_image_urls?.[0] || imgUri || '',
+                      },
+                    } as any}
+                    key={p.id}
+                    asChild
+                  >
                     <TouchableOpacity style={styles.productCard} activeOpacity={0.85}>
                       <CachedImage uri={imgUri} style={styles.productImg} />
                       <View style={styles.productInfo}>
                         <View style={styles.productTitleRow}>
                           <Text style={styles.productTitle} numberOfLines={1} ellipsizeMode="tail">
-                            {p.title || 'Virtual Look'}
+                            {p.title || (p.brand && p.brand !== 'FitMe' ? `${p.brand} Look` : (p.saved_photo_name ? `Look with ${p.saved_photo_name}` : 'Virtual Look'))}
                           </Text>
                           <TouchableOpacity
                             onPress={() => handleToggleTryonSave(p.id)}
@@ -605,21 +652,25 @@ export default function Home() {
               </View>
               <Text style={styles.emptyCompTitle}>No price comparisons yet.</Text>
               <Text style={styles.emptyCompBody}>
-                Find a product and compare prices across stores.
+                Tap 'Compare prices' on any generated try-on to find and compare deals across stores.
               </Text>
               <TouchableOpacity
                 style={styles.emptyCompBtn}
-                onPress={() => router.push('/find-product' as any)}
+                onPress={() => router.push('/(tabs)/looks' as any)}
                 activeOpacity={0.85}
               >
-                <Text style={styles.emptyCompBtnText}>Find a Product</Text>
+                <Text style={styles.emptyCompBtnText}>View Your Looks</Text>
               </TouchableOpacity>
             </View>
           ) : (
             <View style={styles.compMasonry}>
               <View style={styles.compCol}>
                 {recentComparisons.filter((_, i) => i % 2 === 0).map((item) => (
-                  <Link href={`/find-product/results?scanId=${item.scan_id}` as any} key={item.scan_id} asChild>
+                  <Link
+                    href={`/find-product/results?comparisonId=${item.id}${item.scan_id ? `&scanId=${item.scan_id}` : ''}` as any}
+                    key={item.id}
+                    asChild
+                  >
                     <TouchableOpacity style={styles.compCard} activeOpacity={0.85}>
                       <CachedImage
                         uri={getComparisonImageUri(item)}
@@ -648,7 +699,11 @@ export default function Home() {
               </View>
               <View style={styles.compCol}>
                 {recentComparisons.filter((_, i) => i % 2 === 1).map((item) => (
-                  <Link href={`/find-product/results?scanId=${item.scan_id}` as any} key={item.scan_id} asChild>
+                  <Link
+                    href={`/find-product/results?comparisonId=${item.id}${item.scan_id ? `&scanId=${item.scan_id}` : ''}` as any}
+                    key={item.id}
+                    asChild
+                  >
                     <TouchableOpacity style={styles.compCard} activeOpacity={0.85}>
                       <CachedImage
                         uri={getComparisonImageUri(item)}
@@ -801,6 +856,15 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingLeft: 10,
     paddingRight: 8,
+  },
+  editorialClearBtn: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: Colors.muted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
   },
   editorialArrowBtn: {
     width: 40,

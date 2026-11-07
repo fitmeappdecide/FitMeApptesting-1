@@ -9,6 +9,7 @@ import { AppHeader } from '../../src/components/AppHeader';
 import { Colors, Spacing, Radii } from '../../src/constants/theme';
 import { useSession } from '../../src/services/session';
 import { productIntelligenceApi, PICandidate } from '../../src/services/api';
+import { usePriceComparisonStore } from '../../src/services/priceComparisonStore';
 import { extractProductFromUrl } from '../../src/services/extraction';
 
 interface ProductResult {
@@ -74,14 +75,22 @@ import { RetailerLogo } from '../../src/components/RetailerLogo';
 
 export default function FindProductResults() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ scanId?: string }>();
+  const params = useLocalSearchParams<{ scanId?: string; comparisonId?: string }>();
   const scanId = params.scanId;
+  const comparisonId = params.comparisonId;
+  const activeLookupId = comparisonId || scanId;
 
   const setProductImageUri = useSession((s) => s.setProductImageUri);
   const setSourceUrl = useSession((s) => s.setSourceUrl);
   const setProductId = useSession((s) => s.setProductId);
 
-  const [loading, setLoading] = useState(Boolean(scanId));
+  const [loading, setLoading] = useState<boolean>(() => {
+    if (activeLookupId) {
+      const stored = usePriceComparisonStore.getState().getComparison(activeLookupId);
+      if (stored && stored.candidates && stored.candidates.length > 0) return false;
+    }
+    return Boolean(scanId);
+  });
   const [refreshingPrices, setRefreshingPrices] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [results, setResults] = useState<ProductResult[]>(fallbackResults);
@@ -222,9 +231,37 @@ export default function FindProductResults() {
   };
 
   useEffect(() => {
-    if (!scanId) return;
+    const activeId = comparisonId || scanId;
+    if (!activeId) return;
 
     let isMounted = true;
+
+    // 1. Instant check in local comparison store (0ms load)
+    const stored = usePriceComparisonStore.getState().getComparison(activeId);
+    if (stored && stored.candidates && stored.candidates.length > 0) {
+      const mappedStored: ProductResult[] = stored.candidates.map((c, idx) => ({
+        id: c.id || `cand-${idx}`,
+        title: stored.title || 'Fashion Garment',
+        platform: c.platform || 'Store',
+        price: c.price || (c.numericPrice ? `₹${c.numericPrice.toLocaleString('en-IN')}` : 'Check store'),
+        originalPrice: c.originalPrice || '',
+        discount: c.discount || '',
+        rating: c.deliveryNote || '4.3 ★ · Free delivery',
+        image:
+          c.imageUrl ||
+          stored.garment_image_url ||
+          'https://images.unsplash.com/photo-1572804013309-59a88b7e92f1?auto=format&fit=crop&w=400&q=80',
+        url: c.url || 'https://www.google.com',
+        isExact: true,
+        matchType: 'exact',
+      }));
+      setResults(mappedStored);
+      setLoading(false);
+      return;
+    }
+
+    if (!scanId) return;
+
     async function loadScanResults() {
       try {
         setLoading(true);
@@ -271,7 +308,7 @@ export default function FindProductResults() {
     return () => {
       isMounted = false;
     };
-  }, [scanId]);
+  }, [scanId, comparisonId]);
 
   const toggleFavorite = (id: string) => {
     setFavorites((prev) => ({ ...prev, [id]: !prev[id] }));

@@ -126,7 +126,20 @@ const LookCard = React.memo(function LookCard({
   const displayBrand = getDisplayBrand(item.brand, item.title);
 
   return (
-    <Link href={{ pathname: "/result", params: { jobId: item.id } } as any} asChild>
+    <Link
+      href={{
+        pathname: "/result",
+        params: {
+          jobId: item.id,
+          initialTitle: item.title || (item.brand && item.brand !== 'FitMe' ? `${item.brand} Look` : (item.saved_photo_name ? `Look with ${item.saved_photo_name}` : '')),
+          initialBrand: item.brand || '',
+          initialPlatform: item.platform || '',
+          initialResultUrl: item.result_image_urls?.[0] || item.thumbnail_url || imageUrl || '',
+          initialGarmentUrl: item.thumbnail_url || item.result_image_urls?.[0] || imageUrl || '',
+        },
+      } as any}
+      asChild
+    >
       <TouchableOpacity
         style={styles.masonryCard}
         activeOpacity={0.85}
@@ -142,7 +155,7 @@ const LookCard = React.memo(function LookCard({
         />
         <View style={styles.masonryInfo}>
           <Text style={styles.masonryTitle} numberOfLines={2}>
-            {item.title || "Virtual Look"}
+            {item.title || (item.brand && item.brand !== 'FitMe' ? `${item.brand} Look` : (item.saved_photo_name ? `Look with ${item.saved_photo_name}` : 'Virtual Look'))}
           </Text>
           <View style={styles.masonryMeta}>
             <Text style={styles.masonryBrand} numberOfLines={1}>{displayBrand}</Text>

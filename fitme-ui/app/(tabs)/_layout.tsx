@@ -35,6 +35,9 @@ const tabs: TabConfig[] = [
   { name: 'profile', label: 'Profile', icon: 'person-outline',     iconActive: 'person-outline' },
 ];
 
+// Set to true to re-enable the center elevated floating camera button
+const SHOW_CENTER_CAMERA_BUTTON = false;
+
 interface TabLayoutInfo {
   x: number;
   y: number;
@@ -324,8 +327,8 @@ function CustomTabBar({ state, navigation }: any) {
               />
             );
 
-            // Render central raised camera button between Looks (idx 1) and Ava (idx 2)
-            if (idx === 1) {
+            // Optionally render central raised camera button between Looks (idx 1) and Ava (idx 2)
+            if (SHOW_CENTER_CAMERA_BUTTON && idx === 1) {
               return (
                 <React.Fragment key={tab.name}>
                   {tabItemNode}
@@ -379,8 +382,8 @@ const styles = StyleSheet.create({
     borderRadius: 36,
     paddingVertical: 6,
     paddingHorizontal: 6,
-    width: '90%',
-    maxWidth: 440,
+    width: '82%',
+    maxWidth: 350,
     justifyContent: 'space-around',
     alignItems: 'center',
     // Clean subtle warm border

@@ -213,9 +213,6 @@ export default function UploadPhoto() {
         {/* User Model Photo Section */}
         <View style={styles.sectionHeaderWrap}>
           <Text style={styles.sectionHeading}>Add your photo</Text>
-          <Text style={styles.sectionSubheading}>
-            Select your model photo below to try on the outfit.
-          </Text>
         </View>
 
         {/* User Model Photo Upload / Preview Area */}

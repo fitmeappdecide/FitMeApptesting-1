@@ -5,7 +5,8 @@ import { tryOnApi, TryOnHistoryItem, getAuthenticatedUserId, getSessionEpoch } f
 import { DatabaseManager, LooksRepository, LocalTryOnJob, TryOnStatus } from '../repositories';
 import { useUserStore } from './userStore';
 
-export function mapLocalJobToHistoryItem(job: LocalTryOnJob): TryOnHistoryItem {
+export function mapLocalJobToHistoryItem(job: LocalTryOnJob, existingItem?: TryOnHistoryItem | number | null): TryOnHistoryItem {
+  const existing = typeof existingItem === 'object' && existingItem !== null ? existingItem : null;
   const resultUrls =
     job.result_image_urls && job.result_image_urls.length > 0
       ? job.result_image_urls
@@ -26,9 +27,9 @@ export function mapLocalJobToHistoryItem(job: LocalTryOnJob): TryOnHistoryItem {
     is_saved: job.is_saved,
     saved_photo_id: job.saved_photo_id || null,
     saved_photo_name: job.saved_photo_name || null,
-    brand: job.brand_id || null,
-    title: null,
-    platform: null,
+    brand: existing?.brand || job.brand_id || null,
+    title: existing?.title || null,
+    platform: existing?.platform || null,
   };
 }
 
@@ -146,8 +147,15 @@ export const useLooksStore = create<LooksState>()(
               LooksRepository.getGeneratedLooks(20, 0),
               LooksRepository.getSavedLooks(20, 0),
             ]);
-            const mappedGen = localGen.map(mapLocalJobToHistoryItem);
-            const mappedSaved = localSaved.map(mapLocalJobToHistoryItem);
+            const currentGenMap = new Map(get().generatedLooks.map((item) => [item.id, item]));
+            const currentSavedMap = new Map(get().savedLooks.map((item) => [item.id, item]));
+
+            const mappedGen = localGen.map((job) =>
+              mapLocalJobToHistoryItem(job, currentGenMap.get(job.server_id || job.local_id))
+            );
+            const mappedSaved = localSaved.map((job) =>
+              mapLocalJobToHistoryItem(job, currentSavedMap.get(job.server_id || job.local_id))
+            );
 
             if (
               get().cachedUserId !== activeUserId ||

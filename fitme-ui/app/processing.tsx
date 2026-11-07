@@ -70,6 +70,7 @@ export default function Processing() {
   const setScanId = useSession((s) => s.setScanId);
   const setTryOnJobId = useSession((s) => s.setTryOnJobId);
   const setResultImageUrls = useSession((s) => s.setResultImageUrls);
+  const extractedProduct = useSession((s) => s.extractedProduct);
 
   // Smooth continuous progress ticker so the screen NEVER feels frozen or stuck
   useEffect(() => {
@@ -77,21 +78,7 @@ export default function Processing() {
       setProgress((prev) => {
         if (prev >= 100) return 100;
 
-        if (Platform.OS === 'android') {
-          const target = targetProgressRef.current;
-          if (prev < target) {
-            const diff = target - prev;
-            const step = Math.max(0.3, diff * 0.1);
-            return Math.min(target, prev + step);
-          } else if (prev < 99) {
-            // Asymptotic creep towards 99% ceiling so Android progress is continuously active during VTON inference
-            const creep = Math.max(0.04, (99 - prev) * 0.02);
-            return Math.min(99, prev + creep);
-          }
-          return prev;
-        }
-
-        // Original iOS ticker behavior (UNTOUCHED)
+        // Smooth milestone-driven progress ticker (identical for iOS & Android)
         const target = targetProgressRef.current;
         if (prev < target) {
           const diff = target - prev;
@@ -361,7 +348,20 @@ TOTAL Processing -> Result: ${totalPipelineDuration}s
 ==================================================
 `);
 
-        setTimeout(() => router.replace({ pathname: '/result', params: { jobId: job_id } } as any), 450);
+        setTimeout(
+          () =>
+            router.replace({
+              pathname: '/result',
+              params: {
+                jobId: job_id,
+                initialTitle: extractedProduct?.title || '',
+                initialBrand: extractedProduct?.brand || '',
+                initialResultUrl: finalResultUrls[0] || '',
+                initialGarmentUrl: extractedProduct?.imageUrl || '',
+              },
+            } as any),
+          450
+        );
       }
     } catch (e) {
       console.error(e);
@@ -448,11 +448,7 @@ TOTAL Processing -> Result: ${totalPipelineDuration}s
             </View>
 
             <View style={styles.infoContainer}>
-              <Text style={styles.percentText}>
-                {Platform.OS === 'android'
-                  ? (progress >= 100 ? 100 : Math.min(99, Math.floor(progress)))
-                  : Math.min(100, Math.round(progress))}%
-              </Text>
+              <Text style={styles.percentText}>{Math.min(100, Math.round(progress))}%</Text>
               <Text style={styles.statusText}>{statusText}</Text>
 
               <View style={styles.progressBarTrack}>

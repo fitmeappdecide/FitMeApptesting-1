@@ -9,17 +9,8 @@ import { useSession } from '../src/services/session';
 import { extractProductFromUrl, detectPlatformFromUrl, ExtractionError, toExtractedProductInput, NormalizedProduct } from '../src/services/extraction';
 import { productApi } from '../src/services/api';
 
-function formatPrice(val?: string | number | null): string | null {
-  if (!val) return null;
-  const str = String(val).trim();
-  if (!str || str.toLowerCase() === 'unknown') return null;
-  if (str.startsWith('₹') || str.startsWith('$')) return str;
-  const num = parseFloat(str.replace(/[^0-9.]/g, ''));
-  if (!isNaN(num) && num > 0) {
-    return `₹${num.toLocaleString('en-IN')}`;
-  }
-  return `₹${str}`;
-}
+import { formatProductPrice } from '../src/utils/price';
+const formatPrice = formatProductPrice;
 
 import { formatRetailerName } from '../src/constants/retailers';
 import { RetailerLogo } from '../src/components/RetailerLogo';
@@ -188,8 +179,8 @@ export default function Import() {
   const displayTitle = cleanDisplayTitle(extractedProduct?.title || (productImageUri ? 'Uploaded Garment' : ''), extractedProduct?.brand);
   const extractedSize = extractSizeFromTitle(extractedProduct?.title);
   const metaLine = extractedSize ? `${extractedSize} · ${displayPlatform}` : displayPlatform;
-  const formattedPrice = formatPrice(extractedProduct?.price);
   const targetUrl = sourceUrl || extractedProduct?.sourceUrl;
+  const formattedPrice = formatPrice(extractedProduct?.price, targetUrl);
 
   const handleViewOriginal = () => {
     if (targetUrl) {
