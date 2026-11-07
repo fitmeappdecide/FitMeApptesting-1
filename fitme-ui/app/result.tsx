@@ -139,6 +139,8 @@ export default function Result() {
               : 'Virtual Look'),
           brand: storeMatch.brand || params.initialBrand || 'FitMe',
           platform: storeMatch.platform || params.initialPlatform,
+          price: storeMatch.price !== null && storeMatch.price !== undefined ? String(storeMatch.price) : undefined,
+          product_url: storeMatch.product_url || undefined,
           garment_image_url:
             params.initialGarmentUrl ||
             storeMatch.thumbnail_url ||
@@ -247,8 +249,8 @@ export default function Result() {
                 : 'Virtual Look'),
             brand: storeMatch.brand || prev?.brand || params.initialBrand || 'FitMe',
             platform: storeMatch.platform || prev?.platform || params.initialPlatform,
-            price: prev?.price,
-            product_url: prev?.product_url,
+            price: storeMatch.price !== null && storeMatch.price !== undefined ? String(storeMatch.price) : prev?.price,
+            product_url: storeMatch.product_url || prev?.product_url,
             affiliate_url: prev?.affiliate_url,
             garment_image_url:
               prev?.garment_image_url ||
@@ -398,11 +400,10 @@ export default function Result() {
   const productBrand = detail?.brand || params.initialBrand || extractedProduct?.brand || 'FitMe';
   const productTitle = detail?.title || params.initialTitle || extractedProduct?.title || 'Virtual Look';
   const shopUrl = detail?.affiliate_url || detail?.product_url || extractedProduct?.sourceUrl || null;
-  const productPrice =
-    detail?.price ||
-    (extractedProduct?.price
-      ? formatProductPrice(extractedProduct.price, shopUrl)
-      : null);
+  const rawProductPrice = detail?.price || extractedProduct?.price;
+  const productPrice = rawProductPrice
+    ? formatProductPrice(rawProductPrice, shopUrl)
+    : null;
 
   // Resolve Compare Prices State & Candidates (Strictly On-Demand)
   const sessionScanId = useSession((s) => s.scanId);
@@ -699,20 +700,29 @@ export default function Result() {
         return;
       }
 
+      const shareMessage = [
+        '✨ 𝒀𝒐𝒖𝒓 𝒔𝒕𝒚𝒍𝒆, 𝒘𝒊𝒕𝒉𝒐𝒖𝒕 𝒍𝒊𝒎𝒊𝒕𝒔   -Fit Me',
+        'Try it on yourself: https://fitmefashion.com',
+      ].join('\n\n');
+
       if (Platform.OS === 'android') {
-        const shareTitle = productTitle && productTitle !== 'Virtual Look' ? `👗 ${productTitle}` : null;
-        const sharePrice = productPrice ? `${productPrice}` : null;
-        const productLine = [shareTitle, sharePrice].filter(Boolean).join('\n');
-
-        const shareMessage = [
-          '✨ Tried this look on FitMe!',
-          productLine ? `\n${productLine}` : '',
-          '\nSee how this outfit looks on me with AI Try-On.\n👗 Discover your next look with FitMe.',
-        ].filter(Boolean).join('\n').trim();
-
         await shareImageWithText(localUri, shareMessage, 'Share your look');
       } else {
-        await Sharing.shareAsync(localUri, { mimeType: 'image/jpeg', dialogTitle: 'Share your look' });
+        const shareUrl = localUri.startsWith('file://') ? localUri : `file://${localUri}`;
+        try {
+          await Share.share(
+            {
+              url: shareUrl,
+              message: shareMessage,
+            },
+            {
+              subject: '✨ 𝒀𝒐𝒖𝒓 𝒔𝒕𝒚𝒍𝒆, 𝒘𝒊𝒕𝒉𝒐𝒖𝒕 𝒍𝒊𝒎𝒊𝒕𝒔   -Fit Me',
+              dialogTitle: 'Share your look',
+            }
+          );
+        } catch (shareErr) {
+          await Sharing.shareAsync(shareUrl, { mimeType: 'image/jpeg', dialogTitle: 'Share your look' });
+        }
       }
     } catch (err: any) {
       if (!String(err?.message).includes('User did not share') && !String(err?.message).includes('dismissed') && !String(err?.message).includes('cancel')) {
@@ -725,7 +735,7 @@ export default function Result() {
         setIsSharing(false);
       }
     }
-  }, [RESULT_IMG, isSharing, productTitle, productPrice]);
+  }, [RESULT_IMG, isSharing]);
 
   // ── Fullscreen image viewer handlers (Page 0 = ORIGINAL, Page 1 = ON YOU)
   const openFullscreen = useCallback((initialView: 'original' | 'you') => {

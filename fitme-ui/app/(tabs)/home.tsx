@@ -381,11 +381,6 @@ export default function Home() {
                   <Logo size={28} />
                   {isPremium && <ProMemberBadge variant="compact" />}
                 </View>
-                <Link href="/notifications" asChild>
-                  <TouchableOpacity style={styles.bellBtn} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <Ionicons name="notifications-outline" size={24} color={Colors.foreground} />
-                  </TouchableOpacity>
-                </Link>
               </View>
 
               {/* Editorial Title & Eyebrow */}
@@ -478,11 +473,6 @@ export default function Home() {
                 <Logo size={28} />
                 {isPremium && <ProMemberBadge variant="compact" />}
               </View>
-              <Link href="/notifications" asChild>
-                <TouchableOpacity style={styles.bellBtn} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <Ionicons name="notifications-outline" size={24} color={Colors.foreground} />
-                </TouchableOpacity>
-              </Link>
             </View>
 
             <View style={styles.heroCard}>

@@ -1,8 +1,10 @@
+import React, { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
 import { Colors } from '../src/constants/theme';
+import { requestNotificationPermissions } from '../src/services/notificationService';
 
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({
@@ -13,6 +15,10 @@ export default function RootLayout() {
     'CormorantGaramond-Italic': require('../assets/fonts/CormorantGaramond_400Regular_Italic.ttf'),
     'CormorantGaramond-SemiBoldItalic': require('../assets/fonts/CormorantGaramond_600SemiBold_Italic.ttf'),
   });
+
+  useEffect(() => {
+    requestNotificationPermissions();
+  }, []);
 
   if (!fontsLoaded) {
     return null;

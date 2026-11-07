@@ -13,7 +13,7 @@ interface AppHeaderProps {
   showBell?: boolean;
 }
 
-export function AppHeader({ title, back, onBack, right, showBell = true }: AppHeaderProps) {
+export function AppHeader({ title, back, onBack, right, showBell = false }: AppHeaderProps) {
   const router = useRouter();
 
   const handleBack = () => {

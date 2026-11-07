@@ -200,7 +200,7 @@ export default function Profile() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <AppHeader title="Profile" showBell />
+      <AppHeader title="Profile" />
 
       <ScrollView
         contentContainerStyle={styles.scroll}

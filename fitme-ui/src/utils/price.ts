@@ -64,6 +64,10 @@ export function formatProductPrice(val?: string | number | null, sourceUrl?: str
     return `₹${num.toLocaleString('en-IN')}`;
   }
 
-  // International default (.com etc.)
-  return `$${num.toLocaleString('en-US')}`;
+  if (isInternationalStore) {
+    return `$${num.toLocaleString('en-US')}`;
+  }
+
+  // Fallback for bare numbers when no international store detected
+  return `₹${num.toLocaleString('en-IN')}`;
 }

@@ -291,7 +291,7 @@ export async function request<T>(endpoint: string, options: RequestOptions = {},
       });
     } catch (networkErr: any) {
       if (currentBaseUrl !== PRODUCTION_API_URL && !controller.signal.aborted) {
-        console.warn(`[Network Failover] Local server (${currentBaseUrl}) unreachable, retrying against production Railway: ${PRODUCTION_API_URL}${endpoint}`);
+        console.log(`[Network Failover] Local server (${currentBaseUrl}) unreachable, retrying against production Railway: ${PRODUCTION_API_URL}${endpoint}`);
         response = await fetch(`${PRODUCTION_API_URL}${endpoint}`, {
           ...options,
           headers: finalHeaders,

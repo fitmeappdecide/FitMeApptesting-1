@@ -280,7 +280,6 @@ export default function Looks() {
     <SafeAreaView style={styles.container} edges={["top"]}>
       <AppHeader
         title="Your Looks"
-        showBell
         right={
           items.length > 0 ? (
             <TouchableOpacity

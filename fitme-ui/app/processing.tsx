@@ -11,6 +11,7 @@ import { useSession } from '../src/services/session';
 import { scanApi, tryOnApi, savedPhotosApi, ApiError, getAuthenticatedUserId, TryOnHistoryItem } from '../src/services/api';
 import { DatabaseManager, LooksRepository } from '../src/repositories';
 import { useLooksStore } from '../src/services/looksStore';
+import { sendTryOnReadyNotification } from '../src/services/notificationService';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const VIDEO_SIZE = Math.min(SCREEN_WIDTH * 0.78, SCREEN_HEIGHT * 0.34, 320);
@@ -438,6 +439,9 @@ Result cache & display:   ${formatTime(t7Date)} -> ${formatTime(t8Date)}  (+${pr
 TOTAL Processing -> Result: ${totalPipelineDuration}s
 ==================================================
 `);
+
+        // Send local notification alert (appears on lock screen / banner if app was backgrounded)
+        sendTryOnReadyNotification(garmentTitle);
 
         setTimeout(
           () =>

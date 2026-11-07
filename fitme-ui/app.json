@@ -31,7 +31,9 @@
       "permissions": [
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
-        "CAMERA"
+        "CAMERA",
+        "VIBRATE",
+        "POST_NOTIFICATIONS"
       ],
       "googleServicesFile": "./google-services.json"
     },
@@ -53,6 +55,13 @@
             "./assets/fonts/CormorantGaramond_400Regular_Italic.ttf",
             "./assets/fonts/CormorantGaramond_600SemiBold_Italic.ttf"
           ]
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#F7EFE7"
         }
       ]
     ],
