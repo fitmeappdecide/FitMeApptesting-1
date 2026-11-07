@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 from PIL import Image, ImageOps
 
 from app.services.preprocessing.person_detector import PersonBox
@@ -190,3 +190,88 @@ def apply_smart_crop(
 
     cropped_img = img_oriented.crop((crop_box.px_x1, crop_box.px_y1, crop_box.px_x2, crop_box.px_y2))
     return cropped_img, crop_box
+
+
+def calculate_group_crop_box(
+    image_width: int,
+    image_height: int,
+    persons: List[PersonBox],
+    *,
+    top_pad_ratio: float = 0.10,
+    bottom_pad_ratio: float = 0.05,
+    side_pad_ratio: float = 0.08,
+) -> CropBox:
+    """Calculates a framing crop box enclosing all given persons, trimming excess side/top background."""
+    if not persons:
+        return CropBox(0, 0, image_width, image_height, 0.0, 0.0, 1.0, 1.0)
+
+    W = image_width
+    H = image_height
+
+    # 1. Unified group envelope in normalized coordinates
+    min_x = min(p.xmin for p in persons)
+    max_x = max(p.xmax for p in persons)
+    min_y = min(p.ymin for p in persons)
+    max_y = max(p.ymax for p in persons)
+
+    # 2. Pixel coordinates
+    g_x1 = int(round(min_x * W))
+    g_x2 = int(round(max_x * W))
+    g_y1 = int(round(min_y * H))
+    g_y2 = int(round(max_y * H))
+
+    gw = max(1, g_x2 - g_x1)
+    gh = max(1, g_y2 - g_y1)
+
+    # 3. Proportional padding around the group
+    pad_top = int(round(gh * top_pad_ratio))
+    pad_bottom = int(round(gh * bottom_pad_ratio))
+    pad_side = int(round(gw * side_pad_ratio))
+
+    crop_x1 = max(0, g_x1 - pad_side)
+    crop_x2 = min(W, g_x2 + pad_side)
+    crop_y1 = max(0, g_y1 - pad_top)
+    crop_y2 = min(H, g_y2 + pad_bottom)
+
+    # Safety bounds
+    final_x1 = max(0, min(W - 1, crop_x1))
+    final_y1 = max(0, min(H - 1, crop_y1))
+    final_x2 = max(final_x1 + 1, min(W, crop_x2))
+    final_y2 = max(final_y1 + 1, min(H, crop_y2))
+
+    return CropBox(
+        px_x1=final_x1,
+        px_y1=final_y1,
+        px_x2=final_x2,
+        px_y2=final_y2,
+        norm_x1=final_x1 / W,
+        norm_y1=final_y1 / H,
+        norm_x2=final_x2 / W,
+        norm_y2=final_y2 / H,
+    )
+
+
+def apply_group_smart_crop(
+    image: Image.Image,
+    persons: List[PersonBox],
+    *,
+    top_pad_ratio: float = 0.10,
+    bottom_pad_ratio: float = 0.05,
+    side_pad_ratio: float = 0.08,
+) -> Tuple[Image.Image, CropBox]:
+    """Applies a lossless bounding crop to the image enclosing all given persons."""
+    img_oriented = ImageOps.exif_transpose(image)
+    w, h = img_oriented.size
+
+    crop_box = calculate_group_crop_box(
+        image_width=w,
+        image_height=h,
+        persons=persons,
+        top_pad_ratio=top_pad_ratio,
+        bottom_pad_ratio=bottom_pad_ratio,
+        side_pad_ratio=side_pad_ratio,
+    )
+
+    cropped_img = img_oriented.crop((crop_box.px_x1, crop_box.px_y1, crop_box.px_x2, crop_box.px_y2))
+    return cropped_img, crop_box
+

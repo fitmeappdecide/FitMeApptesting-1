@@ -357,14 +357,6 @@ async def start_tryon(
                 garment_image_url: str = first_garment_url
                 garment_type = garment.garment_type if (garment.garment_type and garment.garment_type != "unknown") else _detect_garment_type(garment)
 
-                if garment_type == "shoes":
-                    raise api_error(
-                        422,
-                        "FOOTWEAR_TRYON_UNSUPPORTED",
-                        "Virtual try-on is currently available for apparel (tops, bottoms, dresses, ethnic wear). Footwear try-on is not supported by Google Vertex AI.",
-                        "वर्चुअल ट्राई-ऑन वर्तमान में केवल कपड़ों (टॉप्स, बॉटम्स, ड्रेस) के लिए उपलब्ध है। जूते/चप्पल ट्राई-ऑन समर्थित नहीं है।",
-                    )
-
                 provider = get_tryon_provider()
                 result = await provider.generate_tryon(
                     user_image_url=user_image_ref or "",

@@ -12,6 +12,8 @@ from app.services.preprocessing.smart_crop import (
     CropBox,
     calculate_smart_crop_box,
     apply_smart_crop,
+    calculate_group_crop_box,
+    apply_group_smart_crop,
 )
 from app.services.preprocessing.vton_preprocessor import (
     PreprocessReport,
@@ -272,3 +274,43 @@ async def test_vertex_provider_receives_prepared_image_without_modifying_storage
         assert "tryon_results" in res.image_urls[0]
         assert len(captured_person_images) == 1
         assert captured_person_images[0] is not None
+
+
+def test_calculate_group_crop_box_encloses_all_persons():
+    """Verify group crop box perfectly encloses multiple persons side-by-side with padding."""
+    W, H = 1000, 1000
+    p1 = PersonBox(xmin=0.30, ymin=0.25, xmax=0.48, ymax=0.95, confidence=0.90)
+    p2 = PersonBox(xmin=0.52, ymin=0.26, xmax=0.70, ymax=0.96, confidence=0.92)
+
+    crop = calculate_group_crop_box(W, H, [p1, p2])
+
+    # Leftmost person xmin is 300px; crop must be to the left with padding
+    assert crop.px_x1 <= 300
+    # Rightmost person xmax is 700px; crop must be to the right with padding
+    assert crop.px_x2 >= 700
+    # Top headroom
+    assert crop.px_y1 < 250
+    # Bottom footroom
+    assert crop.px_y2 >= 960
+    # Boundaries
+    assert crop.px_x1 >= 0 and crop.px_y1 >= 0
+    assert crop.px_x2 <= W and crop.px_y2 <= H
+    # Preserves width trimming (must not be full 1000px width since background exists)
+    assert crop.width < W
+
+
+def test_group_smart_crop_preserves_both_subjects_and_enlarges():
+    """Verify that multiple prominent subjects trigger group trimming, magnifying them."""
+    W, H = 1000, 800
+    img = Image.new("RGB", (W, H), color=(220, 220, 220))
+    p1 = PersonBox(xmin=0.35, ymin=0.20, xmax=0.48, ymax=0.90, confidence=0.88)
+    p2 = PersonBox(xmin=0.52, ymin=0.22, xmax=0.65, ymax=0.92, confidence=0.89)
+
+    cropped, crop_box = apply_group_smart_crop(img, [p1, p2])
+
+    assert cropped.size == (crop_box.width, crop_box.height)
+    # Cropped width is significantly less than full canvas width (excess sides trimmed)
+    assert cropped.width < W
+    # Both persons are inside the crop box
+    assert crop_box.norm_x1 <= p1.xmin and crop_box.norm_x2 >= p2.xmax
+

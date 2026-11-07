@@ -210,10 +210,6 @@ class VertexProvider(TryOnProvider):
         with TelemetryTimer("VertexProvider.generate_tryon()") as timer:
             start = time.time()
 
-            # Fast reject for unsupported footwear category
-            if garment_type == "shoes":
-                raise RuntimeError("Footwear try-on (shoes, slippers, heels, boots) is currently unsupported by Google Vertex AI virtual-try-on-001 model.")
-
             # Ensure client is initialized
             if self.client is None:
                 self.__init__()
@@ -243,8 +239,6 @@ class VertexProvider(TryOnProvider):
                 raise RuntimeError(f"Garment image could not be loaded: {garment_error or 'garment data is empty'}")
             if self.client is None:
                 raise RuntimeError("Google Vertex AI client is not available. Please verify GCP_VERTEX_KEY_JSON.")
-            if garment_type == "shoes":
-                raise RuntimeError("Footwear try-on (shoes, slippers, heels, boots) is currently unsupported by Google Vertex AI virtual-try-on-001 model.")
 
             person_path = None
             garment_path = None

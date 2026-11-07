@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 from PIL import Image, ImageOps
 
 from app.services.preprocessing.person_detector import LocalPersonDetector, PersonBox, detector
-from app.services.preprocessing.smart_crop import CropBox, apply_smart_crop
+from app.services.preprocessing.smart_crop import CropBox, apply_smart_crop, apply_group_smart_crop
 
 
 @dataclass
@@ -98,6 +98,64 @@ def preprocess_user_image(
             total_time_ms=total_ms,
             notes="No person detected; original preserved",
         )
+
+    # 2.5 Multi-Person Handling: Check for prominent multiple subjects
+    # Filter for prominent persons (ignore tiny distant background bystanders < 5% area or < 35% height)
+    prominent_persons = [
+        p for p in detection.all_persons 
+        if (p.area >= 0.05 or p.height >= 0.35) and p.confidence >= 0.40
+    ]
+
+    if len(prominent_persons) > 1:
+        # Multiple subjects detected
+        group_min_x = min(p.xmin for p in prominent_persons)
+        group_max_x = max(p.xmax for p in prominent_persons)
+        group_min_y = min(p.ymin for p in prominent_persons)
+        group_max_y = max(p.ymax for p in prominent_persons)
+
+        group_width = group_max_x - group_min_x
+        group_height = group_max_y - group_min_y
+
+        # If there is excess background on the sides or top/bottom
+        if group_width < 0.75 or group_height < 0.80 or group_min_y > 0.12 or group_min_x > 0.10 or (1.0 - group_max_x) > 0.10:
+            print(
+                f"✂️ [VTON PREPROCESS] Multiple subjects detected ({len(prominent_persons)}) with excess background "
+                f"(group width={group_width:.1%}, height={group_height:.1%}). Applying Group Background Trimming..."
+            )
+            cropped_img, crop_box = apply_group_smart_crop(
+                img_oriented,
+                prominent_persons,
+                top_pad_ratio=0.10,
+                bottom_pad_ratio=0.05,
+                side_pad_ratio=0.08,
+            )
+            new_w, new_h = cropped_img.size
+
+            out_io = io.BytesIO()
+            fmt = raw_img.format if raw_img.format in ("PNG", "WEBP") else "JPEG"
+            if fmt == "JPEG" and cropped_img.mode in ("RGBA", "P"):
+                cropped_img = cropped_img.convert("RGB")
+            cropped_img.save(out_io, format=fmt, quality=95, optimize=True)
+            prepared_bytes = out_io.getvalue()
+
+            total_ms = (time.perf_counter() - t0) * 1000.0
+            print(
+                f"✨ [VTON PREPROCESS] Group Background Trim complete: {orig_w}x{orig_h} -> {new_w}x{new_h} "
+                f"(crop box: x=[{crop_box.px_x1},{crop_box.px_x2}], y=[{crop_box.px_y1},{crop_box.px_y2}]) "
+                f"in {total_ms:.1f}ms."
+            )
+            return prepared_bytes, PreprocessReport(
+                person_detected=True,
+                person_count=len(prominent_persons),
+                occupancy_ratio=group_height,
+                crop_applied=True,
+                original_dimensions=(orig_w, orig_h),
+                prepared_dimensions=(new_w, new_h),
+                crop_box=(crop_box.px_x1, crop_box.px_y1, crop_box.px_x2, crop_box.px_y2),
+                detection_time_ms=det_ms,
+                total_time_ms=total_ms,
+                notes=f"Group trimmed from {orig_w}x{orig_h} to {new_w}x{new_h} preserving {len(prominent_persons)} persons",
+            )
 
     primary = detection.primary_person
     # Vertical occupancy = height of detected person relative to total image height
