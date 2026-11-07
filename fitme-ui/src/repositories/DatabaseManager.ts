@@ -213,6 +213,12 @@ class DatabaseManagerService {
             completed_at INTEGER,
             _sync_status TEXT NOT NULL DEFAULT 'synced',
             _local_updated_at INTEGER NOT NULL,
+            title TEXT,
+            brand_name TEXT,
+            garment_image_url TEXT,
+            platform TEXT,
+            price REAL,
+            product_url TEXT,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
           );
           CREATE INDEX IF NOT EXISTS idx_tryon_jobs_user_status ON tryon_jobs(user_id, status);
@@ -311,6 +317,35 @@ class DatabaseManagerService {
       } catch (migrationErr) {
         await db.execAsync('ROLLBACK;');
         throw new DatabaseError(`Migration V1 failed: ${migrationErr}`, 'MIGRATION_FAILED');
+      }
+    }
+
+    if (currentVersion < 2) {
+      await db.execAsync('BEGIN TRANSACTION;');
+      try {
+        const columns = [
+          'title TEXT',
+          'brand_name TEXT',
+          'garment_image_url TEXT',
+          'platform TEXT',
+          'price REAL',
+          'product_url TEXT',
+        ];
+        for (const col of columns) {
+          try {
+            await db.execAsync(`ALTER TABLE tryon_jobs ADD COLUMN ${col};`);
+          } catch (_) {
+            // Column may already exist
+          }
+        }
+        await db.execAsync(`
+          INSERT OR REPLACE INTO sync_metadata (key, value, updated_at)
+          VALUES ('schema_version', '2', ${Date.now()});
+        `);
+        await db.execAsync('COMMIT;');
+      } catch (migErr) {
+        await db.execAsync('ROLLBACK;');
+        console.warn('[DatabaseManager] Migration V2 notice:', migErr);
       }
     }
   }

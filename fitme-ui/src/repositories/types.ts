@@ -37,6 +37,12 @@ export interface LocalTryOnJob {
   completed_at: number | null;
   _sync_status: SyncStatus;
   _local_updated_at: number;
+  title?: string | null;
+  brand_name?: string | null;
+  garment_image_url?: string | null;
+  platform?: string | null;
+  price?: number | null;
+  product_url?: string | null;
 }
 
 export interface LocalUserSavedPhoto {

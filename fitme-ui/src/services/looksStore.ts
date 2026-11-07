@@ -27,9 +27,12 @@ export function mapLocalJobToHistoryItem(job: LocalTryOnJob, existingItem?: TryO
     is_saved: job.is_saved,
     saved_photo_id: job.saved_photo_id || null,
     saved_photo_name: job.saved_photo_name || null,
-    brand: existing?.brand || job.brand_id || null,
-    title: existing?.title || null,
-    platform: existing?.platform || null,
+    brand: job.brand_name || existing?.brand || job.brand_id || null,
+    title: job.title || existing?.title || null,
+    platform: job.platform || existing?.platform || null,
+    garment_image_url: job.garment_image_url || existing?.garment_image_url || null,
+    price: job.price ?? existing?.price ?? null,
+    product_url: job.product_url || existing?.product_url || null,
   };
 }
 
@@ -54,7 +57,7 @@ export function mapHistoryItemToLocalJob(
     local_id: item.id,
     server_id: item.id,
     garment_id: item.garment_id || '',
-    brand_id: item.brand || null,
+    brand_id: null,
     status: (item.status || 'completed') as TryOnStatus,
     result_image_urls: item.result_image_urls || [],
     local_image_paths: [],
@@ -64,6 +67,12 @@ export function mapHistoryItemToLocalJob(
     created_at: createdAtMs,
     completed_at: createdAtMs,
     _sync_status: 'synced',
+    title: item.title || null,
+    brand_name: item.brand || null,
+    garment_image_url: item.garment_image_url || null,
+    platform: item.platform || null,
+    price: item.price ?? null,
+    product_url: item.product_url || null,
   };
 }
 

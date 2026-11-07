@@ -295,21 +295,23 @@ export default function Result() {
                     ? new Date(localJob.created_at).toISOString()
                     : String(localJob.created_at || prev?.created_at || ''),
                 title:
-                  prev?.title && prev.title !== 'Virtual Look'
+                  localJob.title ||
+                  (prev?.title && prev.title !== 'Virtual Look'
                     ? prev.title
                     : params.initialTitle ||
                       (localJob.saved_photo_name
                         ? `Look with ${localJob.saved_photo_name}`
-                        : 'Virtual Look'),
+                        : 'Virtual Look')),
                 brand:
-                  prev?.brand && prev.brand !== 'FitMe'
+                  localJob.brand_name ||
+                  (prev?.brand && prev.brand !== 'FitMe'
                     ? prev.brand
-                    : params.initialBrand || localJob.brand_id || 'FitMe',
-                platform: prev?.platform || params.initialPlatform,
-                price: prev?.price,
-                product_url: prev?.product_url,
+                    : params.initialBrand || localJob.brand_id || 'FitMe'),
+                platform: localJob.platform || prev?.platform || params.initialPlatform,
+                price: localJob.price !== null && localJob.price !== undefined ? String(localJob.price) : prev?.price,
+                product_url: localJob.product_url || prev?.product_url,
                 affiliate_url: prev?.affiliate_url,
-                garment_image_url: prev?.garment_image_url || params.initialGarmentUrl,
+                garment_image_url: localJob.garment_image_url || prev?.garment_image_url || params.initialGarmentUrl,
                 garment_images: prev?.garment_images,
               }));
               setIsSaved(Boolean(localJob.is_saved));

@@ -631,6 +631,9 @@ export type TryOnHistoryItem = {
   title?: string | null;
   brand?: string | null;
   platform?: string | null;
+  garment_image_url?: string | null;
+  price?: number | null;
+  product_url?: string | null;
 };
 
 export type TryOnDetailResponse = {

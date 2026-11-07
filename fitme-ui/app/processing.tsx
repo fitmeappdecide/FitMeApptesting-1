@@ -8,7 +8,9 @@ import { AppHeader } from '../src/components/AppHeader';
 import { Colors, Spacing, Radii } from '../src/constants/theme';
 import * as FileSystem from 'expo-file-system';
 import { useSession } from '../src/services/session';
-import { scanApi, tryOnApi, savedPhotosApi, ApiError } from '../src/services/api';
+import { scanApi, tryOnApi, savedPhotosApi, ApiError, getAuthenticatedUserId, TryOnHistoryItem } from '../src/services/api';
+import { DatabaseManager, LooksRepository } from '../src/repositories';
+import { useLooksStore } from '../src/services/looksStore';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const VIDEO_SIZE = Math.min(SCREEN_WIDTH * 0.78, SCREEN_HEIGHT * 0.34, 320);
@@ -46,7 +48,7 @@ const STYLE_TIPS: StyleTip[] = [
 ];
 
 export default function Processing() {
-  const [progress, setProgress] = useState(5);
+  const [progress, setProgress] = useState(0);
   const [statusText, setStatusText] = useState('Uploading photo...');
   const [errorType, setErrorType] = useState<'upload' | 'tryon' | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -78,7 +80,23 @@ export default function Processing() {
       setProgress((prev) => {
         if (prev >= 100) return 100;
 
-        // Smooth milestone-driven progress ticker (identical for iOS & Android)
+        if (Platform.OS === 'android') {
+          const target = targetProgressRef.current;
+          if (prev < target) {
+            const diff = target - prev;
+            // Smooth pacing on Android: maximum step of 0.8% per 75ms tick
+            // Prevents sudden jumping from 0% straight to 40% when tasks resolve quickly
+            const step = Math.min(0.8, Math.max(0.25, diff * 0.08));
+            return Math.min(target, prev + step);
+          } else if (prev < 99) {
+            // Asymptotic creep towards 99% ceiling so Android progress is continuously active during VTON inference
+            const creep = Math.max(0.04, (99 - prev) * 0.02);
+            return Math.min(99, prev + creep);
+          }
+          return prev;
+        }
+
+        // Original iOS ticker behavior (UNTOUCHED)
         const target = targetProgressRef.current;
         if (prev < target) {
           const diff = target - prev;
@@ -300,25 +318,98 @@ export default function Processing() {
         t7ProcessStart = performance.now();
         t7Date = new Date();
 
-        // Non-blocking background pre-cache
-        if (finalResultUrls.length > 0) {
-          const firstUrl = finalResultUrls[0];
-          if (firstUrl && (firstUrl.startsWith('http://') || firstUrl.startsWith('https://'))) {
-            try {
-              const cacheFolder = `${FileSystem.cacheDirectory}fitme_img_cache/`;
-              const cleanUrl = firstUrl.split('?')[0];
-              let hash = 0;
-              for (let i = 0; i < cleanUrl.length; i++) {
-                hash = (hash << 5) - hash + cleanUrl.charCodeAt(i);
-                hash |= 0;
-              }
-              const ext = cleanUrl.split('.').pop() || 'jpg';
-              const localPath = `${cacheFolder}cached_${Math.abs(hash)}.${ext}`;
-              FileSystem.downloadAsync(firstUrl, localPath).catch(() => {});
-            } catch {
-              // Ignore pre-cache error
+        // Resolve extracted product details
+        const garmentImageUrl =
+          extractedProduct?.imageUrl ||
+          extractedProduct?.imageUrls?.[0] ||
+          useSession.getState().productImageUri ||
+          '';
+        const garmentTitle = extractedProduct?.title || 'Virtual Look';
+        const garmentBrand = extractedProduct?.brand || 'FitMe';
+        const garmentPlatform = extractedProduct?.platform || '';
+        const rawPrice = extractedProduct?.price;
+        const garmentPrice =
+          typeof rawPrice === 'number'
+            ? rawPrice
+            : rawPrice
+            ? parseFloat(String(rawPrice).replace(/[^0-9.]/g, '')) || null
+            : null;
+        const garmentProductUrl = extractedProduct?.sourceUrl || '';
+
+        // Non-blocking background pre-cache for BOTH try-on result and extracted garment image
+        const cacheFolder = `${FileSystem.cacheDirectory}fitme_img_cache/`;
+        const urlsToCache = [finalResultUrls[0], garmentImageUrl].filter(
+          (u): u is string => Boolean(u && (u.startsWith('http://') || u.startsWith('https://')))
+        );
+
+        for (const u of urlsToCache) {
+          try {
+            const cleanUrl = u.split('?')[0];
+            let hash = 0;
+            for (let i = 0; i < cleanUrl.length; i++) {
+              hash = (hash << 5) - hash + cleanUrl.charCodeAt(i);
+              hash |= 0;
             }
+            const ext = cleanUrl.split('.').pop() || 'jpg';
+            const localPath = `${cacheFolder}cached_${Math.abs(hash)}.${ext}`;
+            FileSystem.downloadAsync(u, localPath).catch(() => {});
+          } catch {
+            // Ignore pre-cache error
           }
+        }
+
+        // Save immediately to local SQLite repository so it loads in 0ms offline and in history
+        const activeUserId = getAuthenticatedUserId() || DatabaseManager.getActiveUserId();
+        if (activeUserId && DatabaseManager.isDatabaseOpen()) {
+          try {
+            await LooksRepository.insertTryOnJob({
+              local_id: job_id,
+              server_id: job_id,
+              garment_id: activeProductId,
+              status: 'completed',
+              result_image_urls: finalResultUrls,
+              saved_photo_id: activeSavedPhotoId || null,
+              saved_photo_name: useSession.getState().savedPhotoName || null,
+              title: garmentTitle,
+              brand_name: garmentBrand,
+              garment_image_url: garmentImageUrl || null,
+              platform: garmentPlatform,
+              price: garmentPrice,
+              product_url: garmentProductUrl,
+              created_at: Date.now(),
+              completed_at: Date.now(),
+            });
+          } catch (dbErr) {
+            console.warn('[PROCESSING] Notice saving new look to SQLite:', dbErr);
+          }
+        }
+
+        // Also add immediately to useLooksStore in-memory state
+        try {
+          const newLookItem: TryOnHistoryItem = {
+            id: job_id,
+            garment_id: activeProductId,
+            status: 'completed',
+            result_image_urls: finalResultUrls,
+            thumbnail_url: finalResultUrls[0] || null,
+            created_at: new Date().toISOString(),
+            is_saved: false,
+            saved_photo_id: activeSavedPhotoId || null,
+            saved_photo_name: useSession.getState().savedPhotoName || null,
+            title: garmentTitle,
+            brand: garmentBrand,
+            platform: garmentPlatform,
+            garment_image_url: garmentImageUrl || null,
+            price: garmentPrice,
+            product_url: garmentProductUrl,
+          };
+          const looksStore = useLooksStore.getState();
+          const filtered = looksStore.generatedLooks.filter((l) => l.id !== job_id);
+          useLooksStore.setState({
+            generatedLooks: [newLookItem, ...filtered],
+          });
+        } catch (storeErr) {
+          console.warn('[PROCESSING] Notice updating looksStore:', storeErr);
         }
 
         t8DisplayEnd = performance.now();
@@ -354,10 +445,11 @@ TOTAL Processing -> Result: ${totalPipelineDuration}s
               pathname: '/result',
               params: {
                 jobId: job_id,
-                initialTitle: extractedProduct?.title || '',
-                initialBrand: extractedProduct?.brand || '',
+                initialTitle: garmentTitle,
+                initialBrand: garmentBrand,
+                initialPlatform: garmentPlatform,
                 initialResultUrl: finalResultUrls[0] || '',
-                initialGarmentUrl: extractedProduct?.imageUrl || '',
+                initialGarmentUrl: garmentImageUrl || '',
               },
             } as any),
           450
@@ -448,7 +540,11 @@ TOTAL Processing -> Result: ${totalPipelineDuration}s
             </View>
 
             <View style={styles.infoContainer}>
-              <Text style={styles.percentText}>{Math.min(100, Math.round(progress))}%</Text>
+              <Text style={styles.percentText}>
+                {Platform.OS === 'android'
+                  ? (progress >= 100 ? 100 : Math.min(99, Math.floor(progress)))
+                  : Math.min(100, Math.round(progress))}%
+              </Text>
               <Text style={styles.statusText}>{statusText}</Text>
 
               <View style={styles.progressBarTrack}>

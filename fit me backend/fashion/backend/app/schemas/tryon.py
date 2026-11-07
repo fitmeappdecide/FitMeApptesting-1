@@ -52,6 +52,9 @@ class TryOnHistoryItem(BaseModel):
     title: str | None = None
     brand: str | None = None
     platform: str | None = None
+    garment_image_url: str | None = None
+    product_url: str | None = None
+    price: float | None = None
 
     model_config = {"from_attributes": True}
 

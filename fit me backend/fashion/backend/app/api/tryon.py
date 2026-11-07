@@ -584,6 +584,16 @@ async def history(
         thumb_url = storage_service.get_thumbnail_url_for_result(first_url) if first_url else None
         signed_image_urls = [storage_service.sign_if_private(u) for u in (j.result_image_urls or [])]
 
+        garment_img_url = None
+        if garment and isinstance(garment.images, list) and len(garment.images) > 0:
+            first_g = garment.images[0]
+            if isinstance(first_g, dict) and "url" in first_g:
+                garment_img_url = first_g["url"]
+            elif isinstance(first_g, str):
+                garment_img_url = first_g
+        signed_garment_img = storage_service.sign_if_private(garment_img_url) if garment_img_url else None
+        prod_url = garment.product_url or garment.scraped_from_url if garment else None
+
         items.append(
             TryOnHistoryItem(
                 id=j.id,
@@ -598,6 +608,8 @@ async def history(
                 title=garment.product_name if garment else "Virtual Try-On",
                 brand=brand_name,
                 platform=plat,
+                garment_image_url=signed_garment_img,
+                product_url=prod_url,
             )
         )
     return items

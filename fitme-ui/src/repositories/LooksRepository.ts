@@ -37,6 +37,12 @@ function mapRowToTryOnJob(row: any): LocalTryOnJob {
     completed_at: row.completed_at !== null ? Number(row.completed_at) : null,
     _sync_status: row._sync_status || 'synced',
     _local_updated_at: Number(row._local_updated_at),
+    title: row.title || null,
+    brand_name: row.brand_name || null,
+    garment_image_url: row.garment_image_url || null,
+    platform: row.platform || null,
+    price: row.price !== null && row.price !== undefined ? Number(row.price) : null,
+    product_url: row.product_url || null,
   };
 }
 
@@ -117,6 +123,12 @@ export class LooksRepository {
     created_at?: number;
     completed_at?: number | null;
     _sync_status?: any;
+    title?: string | null;
+    brand_name?: string | null;
+    garment_image_url?: string | null;
+    platform?: string | null;
+    price?: number | null;
+    product_url?: string | null;
   }): Promise<LocalTryOnJob> {
     const db = DatabaseManager.getDatabase();
     const activeUserId = DatabaseManager.getActiveUserId();
@@ -142,6 +154,12 @@ export class LooksRepository {
       completed_at: job.completed_at || null,
       _sync_status: job._sync_status || 'synced',
       _local_updated_at: now,
+      title: job.title || null,
+      brand_name: job.brand_name || null,
+      garment_image_url: job.garment_image_url || null,
+      platform: job.platform || null,
+      price: job.price !== undefined && job.price !== null ? job.price : null,
+      product_url: job.product_url || null,
     };
 
     await db.runAsync(
@@ -149,27 +167,34 @@ export class LooksRepository {
         local_id, server_id, user_id, garment_id, brand_id, status,
         result_image_urls, local_image_paths, cache_tier, processing_time_seconds,
         error_message, is_saved, saved_photo_id, saved_photo_name,
-        created_at, completed_at, _sync_status, _local_updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        created_at, completed_at, _sync_status, _local_updated_at,
+        title, brand_name, garment_image_url, platform, price, product_url
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       [
         localJob.local_id,
-        localJob.server_id,
+        localJob.server_id ?? null,
         localJob.user_id,
         localJob.garment_id,
-        localJob.brand_id,
+        localJob.brand_id ?? null,
         localJob.status,
         JSON.stringify(localJob.result_image_urls),
         JSON.stringify(localJob.local_image_paths),
-        localJob.cache_tier,
-        localJob.processing_time_seconds,
-        localJob.error_message,
+        localJob.cache_tier ?? null,
+        localJob.processing_time_seconds ?? null,
+        localJob.error_message ?? null,
         localJob.is_saved ? 1 : 0,
-        localJob.saved_photo_id,
-        localJob.saved_photo_name,
+        localJob.saved_photo_id ?? null,
+        localJob.saved_photo_name ?? null,
         localJob.created_at,
-        localJob.completed_at,
+        localJob.completed_at ?? null,
         localJob._sync_status,
         localJob._local_updated_at,
+        localJob.title ?? null,
+        localJob.brand_name ?? null,
+        localJob.garment_image_url ?? null,
+        localJob.platform ?? null,
+        localJob.price ?? null,
+        localJob.product_url ?? null,
       ]
     );
 

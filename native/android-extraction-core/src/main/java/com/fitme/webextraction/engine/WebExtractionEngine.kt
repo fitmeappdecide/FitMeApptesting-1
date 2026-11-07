@@ -165,7 +165,7 @@ object WebExtractionEngine {
             !domBrand.isNullOrBlank() && domBrand != "null" && domBrand != "Unknown" -> domBrand
             else -> platform
         }
-        val price = domPrice?.let { formatPriceString(it) } ?: "—"
+        val price = domPrice?.let { formatPriceString(it, platform) } ?: "—"
         val images = filteredImages(domImages, platform)
         return ExtractedProduct(title, brand, price, null, images.firstOrNull(), images.take(6))
     }
@@ -178,9 +178,15 @@ object WebExtractionEngine {
             title = domTitle
         }
         if (!domPrice.isNullOrBlank()) {
-            val cleaned = domPrice.replace(Regex("[^0-9.]"), "")
-            val value = cleaned.toDoubleOrNull()
-            if (value != null && value > 0) price = formatRupees(value) else price = domPrice
+            price = if (domPrice.contains("$") || domPrice.contains("€") || domPrice.contains("£") || domPrice.contains("¥")) {
+                domPrice
+            } else if (isIndianPlatform(platform)) {
+                val cleaned = domPrice.replace(Regex("[^0-9.]"), "")
+                val value = cleaned.toDoubleOrNull()
+                if (value != null && value > 0) formatRupees(value) else domPrice
+            } else {
+                domPrice
+            }
         }
         return product.copy(title = title, price = price)
     }
@@ -233,11 +239,19 @@ object WebExtractionEngine {
                 val offers = offersObj ?: offersArr?.optJSONObject(0)
                 if (offers != null) {
                     val rawPrice = offers.opt("price")
-                    price = formatPriceAny(rawPrice) ?: "—"
+                    val priceCurrency = offers.optString("priceCurrency").nullIfBlank()
+                    var extractedPrice = formatPriceAny(rawPrice, platform)
+                    if (extractedPrice != null && !extractedPrice.startsWith("$") && !extractedPrice.startsWith("€") && !extractedPrice.startsWith("£") && !extractedPrice.startsWith("₹")) {
+                        if (priceCurrency.equals("USD", ignoreCase = true)) extractedPrice = "$$extractedPrice"
+                        else if (priceCurrency.equals("EUR", ignoreCase = true)) extractedPrice = "€$extractedPrice"
+                        else if (priceCurrency.equals("GBP", ignoreCase = true)) extractedPrice = "£$extractedPrice"
+                        else if (priceCurrency.equals("INR", ignoreCase = true)) extractedPrice = formatRupees(extractedPrice.toDoubleOrNull() ?: 0.0)
+                    }
+                    price = extractedPrice ?: "—"
                     val lowPrice = offers.opt("lowPrice")
                     val highPrice = offers.opt("highPrice")
-                    if (lowPrice != null) price = formatPriceAny(lowPrice) ?: price
-                    if (highPrice != null) originalPrice = formatPriceAny(highPrice)
+                    if (lowPrice != null) price = formatPriceAny(lowPrice, platform) ?: price
+                    if (highPrice != null) originalPrice = formatPriceAny(highPrice, platform)
                 }
                 return ExtractedProduct(title, brand, price, originalPrice, filteredImgs.firstOrNull(), filteredImgs.take(6))
             }
@@ -339,7 +353,7 @@ object WebExtractionEngine {
             }
             for (img in renderedImages) if (!images.contains(img)) images.add(img)
             val filteredImgs = filteredImages(images, platform)
-            val price = blob.optDouble("price", Double.NaN).takeUnless { it.isNaN() }?.let { formatRupees(it) } ?: "—"
+            val price = blob.optDouble("price", Double.NaN).takeUnless { it.isNaN() }?.let { if (isIndianPlatform(platform)) formatRupees(it) else "${it.toInt()}" } ?: "—"
             ExtractedProduct(title, brand, price, null, filteredImgs.firstOrNull(), filteredImgs.take(6))
         } catch (e: Exception) {
             ExtractionLogger.e("[Engine] parseGenericNextData exception: ${e.message}")
@@ -421,19 +435,32 @@ object WebExtractionEngine {
         }
     }
 
+    private fun isIndianPlatform(platform: String): Boolean {
+        val p = platform.lowercase()
+        return p == "myntra" || p == "ajio" || p == "flipkart" || p == "meesho" || p == "nykaa" || p == "tatacliq"
+    }
+
     private fun formatRupees(value: Double): String {
         val intVal = value.toInt()
         val formatter = java.text.NumberFormat.getNumberInstance(Locale("en", "IN"))
         return "₹${formatter.format(intVal)}"
     }
 
-    private fun formatPriceString(raw: String): String {
-        val cleaned = raw.replace(Regex("[^0-9.]"), "")
+    private fun formatPriceString(raw: String, platform: String = ""): String {
+        val trimmed = raw.trim()
+        if (trimmed.contains("$") || trimmed.contains("€") || trimmed.contains("£") || trimmed.contains("¥")) {
+            return trimmed
+        }
+        val cleaned = trimmed.replace(Regex("[^0-9.]"), "")
         val value = cleaned.toDoubleOrNull() ?: return raw
-        return formatRupees(value)
+        return if (isIndianPlatform(platform)) formatRupees(value) else cleaned
     }
 
-    private fun formatPriceAny(raw: Any?): String? {
+    private fun formatPriceAny(raw: Any?, platform: String = ""): String? {
+        val rawStr = raw?.toString()?.trim() ?: return null
+        if (rawStr.contains("$") || rawStr.contains("€") || rawStr.contains("£") || rawStr.contains("¥")) {
+            return rawStr
+        }
         val value = when (raw) {
             is Double -> raw
             is Int -> raw.toDouble()
@@ -442,7 +469,8 @@ object WebExtractionEngine {
             else -> return null
         }
         if (value <= 0) return null
-        return formatRupees(value)
+        val cleaned = if (value % 1.0 == 0.0) "${value.toInt()}" else "$value"
+        return if (isIndianPlatform(platform)) formatRupees(value) else cleaned
     }
 
     private fun detectPlatform(url: String): String {
