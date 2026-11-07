@@ -11,7 +11,7 @@ from app.core.database import Base
 class Garment(Base):
     __tablename__ = "garments"
     __table_args__ = (
-        CheckConstraint("garment_type in ('tshirt','shirt','kurta','saree','lehenga','dress','pants','hoodie','jacket','unknown')", name="garment_type_allowed"),
+        CheckConstraint("garment_type in ('tshirt','shirt','kurta','saree','lehenga','dress','pants','hoodie','jacket','shoes','unknown')", name="garment_type_allowed"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
