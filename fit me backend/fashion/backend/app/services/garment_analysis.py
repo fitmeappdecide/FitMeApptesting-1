@@ -2,17 +2,27 @@ import re
 
 
 ETHNIC_TYPES = {"kurta", "saree", "lehenga"}
-GARMENT_TYPES = (
-    "tshirt", "shirt", "kurta", "saree", "lehenga", "dress", "pants", "hoodie", "jacket",
+FOOTWEAR_KEYWORDS = {
     "shoes", "shoe", "slipper", "slippers", "heel", "heels", "mule", "mules", "sandal", "sandals",
-    "flats", "flat", "sneaker", "sneakers", "boot", "boots", "footwear"
+    "flats", "flat", "sneaker", "sneakers", "boot", "boots", "footwear", "clog", "clogs", "loafer", "loafers"
+}
+GARMENT_TYPES = (
+    "tshirt", "shirt", "kurta", "saree", "lehenga", "dress", "pants", "hoodie", "jacket", "shoes"
 )
 
 
 def detect_garment_type(name: str, hint: str | None = None) -> str:
-    if hint in (*GARMENT_TYPES, "unknown"):
-        return hint
+    if hint:
+        h_lowered = hint.lower().strip()
+        if h_lowered in FOOTWEAR_KEYWORDS:
+            return "shoes"
+        if h_lowered in (*GARMENT_TYPES, "unknown"):
+            return h_lowered
+
     lowered = name.lower()
+    if any(k in lowered for k in FOOTWEAR_KEYWORDS):
+        return "shoes"
+
     for garment_type in GARMENT_TYPES:
         if garment_type in lowered:
             return garment_type
@@ -20,8 +30,6 @@ def detect_garment_type(name: str, hint: str | None = None) -> str:
         return "tshirt"
     if re.search(r"\bjeans\b|trouser", lowered):
         return "pants"
-    if re.search(r"\bshoes?\b|\bslippers?\b|\bheels?\b|\bmules?\b|\bsandals?\b|\bflats?\b|\bboots?\b", lowered):
-        return "shoes"
     return "unknown"
 
 
