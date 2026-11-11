@@ -3,9 +3,11 @@
 <plist version="1.0">
 <dict>
 	<key>CLIENT_ID</key>
-	<string>691300275712-n44himp0qf510oolu0o45lkl868q6u8b.apps.googleusercontent.com</string>
+	<string>691300275712-9a8296h4rtlq7h8if3mji76vvvnchlt4.apps.googleusercontent.com</string>
 	<key>REVERSED_CLIENT_ID</key>
-	<string>com.googleusercontent.apps.691300275712-n44himp0qf510oolu0o45lkl868q6u8b</string>
+	<string>com.googleusercontent.apps.691300275712-9a8296h4rtlq7h8if3mji76vvvnchlt4</string>
+	<key>ANDROID_CLIENT_ID</key>
+	<string>691300275712-dhgvqugar4b3odq5r6sav9vau74ice7s.apps.googleusercontent.com</string>
 	<key>API_KEY</key>
 	<string>AIzaSyBnzc5EdhEGVK8V9YCjZ7uAhzU9qsEQRxA</string>
 	<key>GCM_SENDER_ID</key>
@@ -13,7 +15,7 @@
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
-	<string>com.fitme.app</string>
+	<string>com.fitmeapp.ios</string>
 	<key>PROJECT_ID</key>
 	<string>fitme-3ac94</string>
 	<key>STORAGE_BUCKET</key>
@@ -29,6 +31,6 @@
 	<key>IS_SIGNIN_ENABLED</key>
 	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:691300275712:ios:eb18eb0c661c99c896aae5</string>
+	<string>1:691300275712:ios:4e962ee164e9870096aae5</string>
 </dict>
 </plist>

@@ -1,5 +1,6 @@
-// src/firebase/auth.ts
-
+import { Platform } from 'react-native';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import { OAuthProvider, signInWithCredential } from 'firebase/auth';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { auth } from './index'; // needed for logout
 import { authApi, ApiError } from '../services/api';
@@ -119,6 +120,94 @@ export const loginWithGoogle = async () => {
     console.error(error?.code);
     console.error(error?.message);
     // Rule A: On authentication failure, purge any partial state to guarantee clean state
+    try {
+      await purgeAllSessionState();
+    } catch (_) {}
+    throw error;
+  }
+};
+
+/** Instrumented loginWithApple with native Apple credential prompt and Firebase exchange */
+export const loginWithApple = async () => {
+  console.log("===== Starting Apple Sign-In =====");
+  try {
+    if (Platform.OS !== 'ios') {
+      throw new Error('Sign in with Apple is only supported on iOS devices.');
+    }
+
+    const isAvailable = await AppleAuthentication.isAvailableAsync();
+    if (!isAvailable) {
+      throw new Error('Sign in with Apple is not available on this device.');
+    }
+
+    console.log("Calling AppleAuthentication.signInAsync()");
+    const appleCredential = await AppleAuthentication.signInAsync({
+      requestedScopes: [
+        AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+        AppleAuthentication.AppleAuthenticationScope.EMAIL,
+      ],
+    });
+
+    const { identityToken } = appleCredential;
+    if (!identityToken) {
+      throw new Error('Apple Sign-In did not return an identityToken');
+    }
+
+    console.log("Identity token obtained from Apple, signing in with Firebase credential");
+    const provider = new OAuthProvider('apple.com');
+    const credential = provider.credential({
+      idToken: identityToken,
+    });
+
+    const userCredential = await signInWithCredential(auth, credential);
+    const firebaseUser = userCredential.user;
+    const firebaseIdToken = await firebaseUser.getIdToken();
+
+    console.log("Calling backend /api/v1/auth/firebase with Firebase ID token");
+    let response: any = null;
+    try {
+      response = await exchangeIdToken(firebaseIdToken);
+      console.log("Backend login successful with Apple");
+    } catch (error: any) {
+      console.error("Backend token exchange failed:", error?.message);
+      if (
+        error instanceof ApiError &&
+        (error.status === 401 || error.status === 403 || error.code === 'INVALID_TOKEN' || error.code === 'INVALID_CREDENTIALS')
+      ) {
+        throw error;
+      }
+      console.warn("Backend unavailable during Apple login; proceeding with authenticated Apple session local-first.");
+    }
+
+    // Extract name if provided (Apple only provides it on the first login)
+    const nameParts = [appleCredential.fullName?.givenName, appleCredential.fullName?.familyName].filter(Boolean);
+    const appleFullName = nameParts.length > 0 ? nameParts.join(' ') : null;
+
+    const user = {
+      uid: response?.user?.id ?? firebaseUser.uid ?? appleCredential.user,
+      email: response?.user?.email ?? appleCredential.email ?? firebaseUser.email ?? null,
+      displayName: response?.user?.full_name ?? appleFullName ?? firebaseUser.displayName ?? null,
+      photoURL: firebaseUser.photoURL ?? null,
+    };
+
+    if (!user.uid) {
+      throw new Error("No valid authenticated user returned from Apple Sign-In");
+    }
+
+    // Initialize clean session for newly authenticated user immediately
+    await initializeUserSession({
+      id: user.uid,
+      email: user.email,
+      full_name: user.displayName,
+      avatar_uri: user.photoURL,
+    });
+
+    console.log("Navigating to Home via Apple Auth");
+    return user;
+  } catch (error: any) {
+    console.error("Apple Sign-In FAILED");
+    console.error(error?.code);
+    console.error(error?.message);
     try {
       await purgeAllSessionState();
     } catch (_) {}

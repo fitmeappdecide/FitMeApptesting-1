@@ -13,7 +13,8 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.fitme.app",
+      "bundleIdentifier": "com.fitmeapp.ios",
+      "usesAppleSignIn": true,
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "FitMe needs access to your photos to create virtual try-ons.",
         "NSCameraUsageDescription": "FitMe needs access to your camera to take photos for try-ons.",
@@ -63,7 +64,8 @@
           "icon": "./assets/icon.png",
           "color": "#F7EFE7"
         }
-      ]
+      ],
+      "expo-apple-authentication"
     ],
     "experiments": {
       "typedRoutes": true

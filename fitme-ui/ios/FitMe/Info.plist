@@ -28,7 +28,9 @@
         <key>CFBundleURLSchemes</key>
         <array>
           <string>fitme</string>
+          <string>com.fitmeapp.ios</string>
           <string>com.fitme.app</string>
+          <string>com.googleusercontent.apps.691300275712-9a8296h4rtlq7h8if3mji76vvvnchlt4</string>
           <string>com.googleusercontent.apps.691300275712-n44himp0qf510oolu0o45lkl868q6u8b</string>
         </array>
       </dict>

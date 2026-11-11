@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, Image, Alert, Linking,
+  View, Text, StyleSheet, TouchableOpacity, Image, Alert, Linking, Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Logo } from '../src/components/Logo';
 import { Colors, Spacing, Radii } from '../src/constants/theme';
 import { authApi, ApiError } from '../src/services/api';
-import { loginWithGoogle } from '../src/firebase/auth';
+import { loginWithGoogle, loginWithApple } from '../src/firebase/auth';
 import { initializeUserSession, purgeAllSessionState } from '../src/services/sessionManager';
 
 function getSanitizedAuthErrorMessage(e: any): { isCancelled: boolean; message: string } {
@@ -16,16 +16,17 @@ function getSanitizedAuthErrorMessage(e: any): { isCancelled: boolean; message: 
   const rawMsg = typeof e?.message === 'string' ? e.message : '';
   const combined = `${code} ${rawMsg}`.toLowerCase();
 
-  // 1. Google Sign-In Cancellation
+  // 1. Google / Apple Sign-In Cancellation
   if (
     code === 'SIGN_IN_CANCELLED' ||
+    code === 'ERR_REQUEST_CANCELED' ||
     code === '12501' ||
     code === '-5' ||
     combined.includes('cancel') ||
     combined.includes('code=-5') ||
     (combined.includes('gidsignin') && combined.includes('cancel'))
   ) {
-    return { isCancelled: true, message: 'Google sign-in was cancelled.' };
+    return { isCancelled: true, message: 'Sign-in was cancelled.' };
   }
 
   // 2. Sign-in in progress
@@ -66,7 +67,7 @@ function getSanitizedAuthErrorMessage(e: any): { isCancelled: boolean; message: 
       return { isCancelled: false, message: 'This email is already registered.' };
     }
     if (e.code === 'INVALID_TOKEN') {
-      return { isCancelled: false, message: 'Unable to verify Google credentials. Please try again.' };
+      return { isCancelled: false, message: 'Unable to verify sign-in credentials. Please try again.' };
     }
     if (e.message && !e.message.toLowerCase().includes('traceback') && !e.message.toLowerCase().includes('exception')) {
       return { isCancelled: false, message: e.message };
@@ -74,7 +75,7 @@ function getSanitizedAuthErrorMessage(e: any): { isCancelled: boolean; message: 
   }
 
   // 6. Generic safe fallback
-  return { isCancelled: false, message: 'Unable to sign in with Google. Please try again.' };
+  return { isCancelled: false, message: 'Unable to sign in. Please try again.' };
 }
 
 export default function Login() {
@@ -134,8 +135,29 @@ export default function Login() {
     }
   };
 
-  const handleAppleSignIn = () => {
-    Alert.alert('Coming soon', 'Sign in with Apple requires capability setup — see README for adding it.');
+  const handleAppleSignIn = async () => {
+    if (Platform.OS !== 'ios') {
+      Alert.alert('Notice', 'Sign in with Apple is only available on iOS devices.');
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const user = await loginWithApple();
+      if (!user) {
+        throw new Error('Apple sign-in returned no authenticated user.');
+      }
+      router.replace('/(tabs)/home');
+    } catch (e: any) {
+      console.error('[AppleSignIn] Technical error:', e);
+      try {
+        await purgeAllSessionState();
+      } catch (_) {}
+      const { isCancelled, message: cleanMessage } = getSanitizedAuthErrorMessage(e);
+      Alert.alert(isCancelled ? 'Sign-in cancelled' : 'Sign-in error', cleanMessage);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleTerms = () => {
@@ -185,19 +207,22 @@ export default function Login() {
               </View>
             </TouchableOpacity>
 
-            {/* Continue with Apple */}
-            <TouchableOpacity
-              style={styles.authBtn}
-              onPress={handleAppleSignIn}
-              activeOpacity={0.8}
-            >
-              <View style={styles.btnContent}>
-                <View style={styles.iconWrap}>
-                  <Ionicons name="logo-apple" size={19} color={Colors.foreground} />
+            {/* Continue with Apple (iOS only) */}
+            {Platform.OS === 'ios' && (
+              <TouchableOpacity
+                style={styles.authBtn}
+                onPress={handleAppleSignIn}
+                disabled={loading}
+                activeOpacity={0.8}
+              >
+                <View style={styles.btnContent}>
+                  <View style={styles.iconWrap}>
+                    <Ionicons name="logo-apple" size={19} color={Colors.foreground} />
+                  </View>
+                  <Text style={styles.btnText}>Continue with Apple</Text>
                 </View>
-                <Text style={styles.btnText}>Continue with Apple</Text>
-              </View>
-            </TouchableOpacity>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Legal Text */}
