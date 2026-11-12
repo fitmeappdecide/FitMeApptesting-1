@@ -4,13 +4,14 @@ import time
 from typing import Any, Literal, Optional
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import api_error, get_current_user, get_current_user_or_anonymous
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.limiter import limiter
 from app.models.analytics import AnalyticsEvent
 from app.models.body_scan import BodyScan
 from app.models.body_profile import BodyProfile
@@ -170,7 +171,9 @@ def _detect_garment_type(
 
 
 @router.post("/start", response_model=TryOnStartResponse)
+@limiter.limit("15/minute")
 async def start_tryon(
+    request: Request,
     payload: TryOnStartRequest,
     x_anonymous_session_id: str | None = Header(default=None),
     user: User = Depends(get_current_user_or_anonymous),

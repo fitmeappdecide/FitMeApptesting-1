@@ -19,10 +19,30 @@ from app.core.config import settings
 from app.core.database import init_models
 from app.core.firebase import init_firebase
 
-limiter = Limiter(key_func=get_remote_address)
+from app.core.limiter import limiter
 
-app = FastAPI(title=settings.app_name, version="0.1.0")
+docs_url = None if settings.is_production else "/docs"
+redoc_url = None if settings.is_production else "/redoc"
+openapi_url = None if settings.is_production else "/openapi.json"
+
+app = FastAPI(
+    title=settings.app_name,
+    version="0.1.0",
+    docs_url=docs_url,
+    redoc_url=redoc_url,
+    openapi_url=openapi_url,
+)
 app.state.limiter = limiter
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 app.add_middleware(
     CORSMiddleware,
@@ -42,8 +62,8 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONRe
 async def unhandled_handler(request: Request, exc: Exception) -> JSONResponse:
     import traceback
     traceback.print_exc()
-    error_msg = str(exc) if (exc and str(exc)) else "Something went wrong."
     logger.error(f"Unhandled Exception on {request.method} {request.url.path}: {exc}")
+    error_msg = "An internal server error occurred. Please try again later." if settings.is_production else (str(exc) if (exc and str(exc)) else "Something went wrong.")
     return JSONResponse(status_code=500, content={"error": "SERVER_ERROR", "message": error_msg, "message_hi": "कुछ गलत हो गया।"})
 
 

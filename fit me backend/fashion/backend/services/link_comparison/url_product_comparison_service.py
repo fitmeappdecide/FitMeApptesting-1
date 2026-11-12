@@ -163,6 +163,9 @@ def _extract_retailer_from_url(url: str, seller: Optional[str] = None) -> str:
         ]:
             if known_name in s_norm:
                 return r_id
+        clean_s = re.sub(r'[^a-zA-Z0-9]', '', s_norm)
+        if clean_s and clean_s not in DISALLOWED_DOMAINS and len(clean_s) > 2:
+            return clean_s
     try:
         # If the URL is wrapped in a Google redirect: e.g. /url?q=... or redirect?url=...
         if "url=" in url or "url?q=" in url:
@@ -278,19 +281,13 @@ class URLProductComparisonService:
     """Dedicated service for comparing exact product prices for URL-originated garments."""
 
     def __init__(self, serpapi_key: Optional[str] = None, api_key: Optional[str] = None):
-        self.api_key = (
-            api_key
-            or getattr(settings, "searchapi_api_key", None)
-            or os.getenv("SEARCHAPI_API_KEY")
-            or "PPfe3AziK1FGR2btbHcSYgAy"
+        self.serper_key = (
+            getattr(settings, "serper_api_key", None)
+            or os.getenv("SERPER_API_KEY")
+            or "e419c57800dd5904e09d00f0dd399c3cce7b40ff"
         )
-        self.serpapi_key = (
-            serpapi_key
-            or getattr(settings, "serpapi_api_key", None)
-            or os.getenv("SERPAPI_API_KEY")
-            or self.api_key
-        )
-
+        self.api_key = api_key or self.serper_key
+        self.serpapi_key = serpapi_key or self.serper_key
 
     async def compare_product(
         self,
@@ -379,15 +376,25 @@ class URLProductComparisonService:
             style_id=source_style_id,
         )
 
-        # 3. Verify Exact Product Identity (Strict brand + title/model consensus)
+        # 3. Verify Exact / Highly Similar Garments across retailers
         verified_candidates = []
+        retailer_counts: Dict[str, int] = {}
+        seen_titles = set()
+
         for raw in discovered_raw:
             cand_url = raw.get("url") or ""
             cand_seller = raw.get("seller")
             cand_retailer = _extract_retailer_from_url(cand_url, cand_seller)
 
-            # Deduplicate by retailer: 1 best offer per retailer
-            if cand_retailer in seen_retailers or cand_retailer == "other":
+            # Deduplicate by retailer: allow up to 2 top offers per retailer
+            if cand_retailer in DISALLOWED_DOMAINS or cand_retailer == "other":
+                continue
+            r_count = retailer_counts.get(cand_retailer, 0)
+            if r_count >= 2:
+                continue
+
+            c_t_norm = _normalize_text(raw.get("title") or "")
+            if c_t_norm in seen_titles:
                 continue
 
             is_exact, confidence, reason = self._verify_exact_product(
@@ -399,7 +406,8 @@ class URLProductComparisonService:
             )
 
             if is_exact:
-                seen_retailers.add(cand_retailer)
+                seen_titles.add(c_t_norm)
+                retailer_counts[cand_retailer] = r_count + 1
                 verified_candidates.append({
                     "raw": raw,
                     "retailer": cand_retailer,
@@ -408,76 +416,48 @@ class URLProductComparisonService:
             else:
                 logger.debug(f"[URLComparison] Rejected candidate '{raw.get('title')}': {reason}")
 
-        # 4. Concurrently resolve live prices for all verified exact candidates
-        if verified_candidates:
-            async with httpx.AsyncClient(timeout=3.5, verify=False) as client:
-                price_tasks = [
-                    self._resolve_candidate_price(client, v["raw"]["url"], v["retailer"], v["raw"].get("snippet_price"))
-                    for v in verified_candidates
-                ]
-                resolved_prices = await asyncio.gather(*price_tasks, return_exceptions=True)
+        # 4. Form candidate offers directly from discovered items
+        for v in verified_candidates:
+            raw = v["raw"]
+            c_ret = v["retailer"]
 
-                for v, p_res in zip(verified_candidates, resolved_prices):
-                    raw = v["raw"]
-                    c_ret = v["retailer"]
+            if c_ret in DISALLOWED_DOMAINS or c_ret == "other":
+                continue
 
-                    # Filter out disallowed/invalid retailers
-                    if c_ret in DISALLOWED_DOMAINS or c_ret == "other":
-                        continue
+            final_p = _parse_inr_price(raw.get("snippet_price"))
+            if not final_p or final_p < 100:
+                continue
 
-                    resolved_p, resolved_mrp, resolved_disc, resolved_img, p_src = (
-                        p_res if isinstance(p_res, tuple) else (raw.get("snippet_price"), raw.get("snippet_mrp"), raw.get("snippet_disc"), None, "searchapi")
-                    )
-                    resolved_p = _parse_inr_price(resolved_p or raw.get("snippet_price"))
-                    resolved_mrp = _parse_inr_price(resolved_mrp or raw.get("snippet_mrp"))
-                    resolved_disc = resolved_disc or raw.get("snippet_disc")
+            # Outlier filter: reject prices that are drastically mismatched (>4.0x or <0.15x)
+            if price and price > 0:
+                if final_p > (price * 4.0) or final_p < (price * 0.15):
+                    continue
 
-                    final_p = resolved_p
-                    # STRICT RULE: Skip candidate if no valid numerical INR selling price is available
-                    if not final_p or final_p < 100:
-                        continue
+            cand_img = raw.get("image_url") or image_url
+            if not cand_img or not str(cand_img).startswith("http"):
+                cand_img = image_url
 
-                    # Outlier filter: reject prices that are drastically mismatched (>3.5x or <0.2x)
-                    if price and price > 0:
-                        if final_p > (price * 3.5) or final_p < (price * 0.2):
-                            continue
+            formatted_p = f"₹{int(final_p):,}" if final_p.is_integer() else f"₹{final_p:,.2f}"
 
-                    cand_img = resolved_img or raw.get("image_url") or image_url
-                    if not cand_img or not str(cand_img).startswith("http"):
-                        cand_img = image_url
-
-                    formatted_p = f"₹{int(final_p):,}" if final_p.is_integer() else f"₹{final_p:,.2f}"
-                    
-                    formatted_orig = None
-                    discount_text = None
-                    if resolved_mrp and final_p and resolved_mrp > final_p:
-                        formatted_orig = f"₹{int(resolved_mrp):,}" if resolved_mrp.is_integer() else f"₹{resolved_mrp:,.2f}"
-                        if not resolved_disc:
-                            resolved_disc = int(round(((resolved_mrp - final_p) / resolved_mrp) * 100))
-                        if resolved_disc and resolved_disc > 0:
-                            discount_text = f"{resolved_disc}% OFF"
-                    elif resolved_disc and resolved_disc > 0:
-                        discount_text = f"{resolved_disc}% OFF"
-
-                    candidates.append({
-                        "id": f"offer-{c_ret}-{uuid.uuid4().hex[:4]}",
-                        "retailer": c_ret,
-                        "platform": _format_retailer_name(c_ret),
-                        "title": raw.get("title") or title or "Exact Product Offer",
-                        "url": raw.get("url") or "",
-                        "image_url": cand_img,
-                        "price": final_p,
-                        "formatted_price": formatted_p,
-                        "original_price": resolved_mrp,
-                        "formatted_original_price": formatted_orig,
-                        "discount_pct": resolved_disc,
-                        "discount_text": discount_text,
-                        "is_exact": True,
-                        "match_confidence": v["confidence"],
-                        "is_best_deal": False,
-                        "price_source": p_src or "live_retailer",
-                        "delivery_note": "Free delivery",
-                    })
+            candidates.append({
+                "id": f"offer-{c_ret}-{uuid.uuid4().hex[:4]}",
+                "retailer": c_ret,
+                "platform": _format_retailer_name(c_ret),
+                "title": raw.get("title") or title or "Exact Product Offer",
+                "url": raw.get("url") or "",
+                "image_url": cand_img,
+                "price": final_p,
+                "formatted_price": formatted_p,
+                "original_price": None,
+                "formatted_original_price": None,
+                "discount_pct": None,
+                "discount_text": None,
+                "is_exact": True,
+                "match_confidence": v["confidence"],
+                "is_best_deal": False,
+                "price_source": "serper_shopping",
+                "delivery_note": "Free delivery",
+            })
 
         # 5. Dynamically determine BEST DEAL (lowest valid numerical selling price)
         min_price = float("inf")
@@ -545,186 +525,48 @@ class URLProductComparisonService:
 
         results: List[Dict[str, Any]] = []
 
-        # 1. Primary Strategy: SearchApi Google Lens API (Multimodal Visual Search matching exact garment photos)
-        active_key = self.api_key or self.serpapi_key
-        if image_url and active_key:
+        # 1. Primary Strategy: Serper Google Shopping API (1 single request = 1 credit, comprehensive real-time discovery)
+        serper_key = (
+            getattr(settings, "serper_api_key", None)
+            or os.getenv("SERPER_API_KEY")
+            or getattr(self, "serper_key", None)
+            or "e419c57800dd5904e09d00f0dd399c3cce7b40ff"
+        )
+        if serper_key and search_query:
             try:
-                # 35s timeout gives Google Lens adequate time to analyze visual patterns and return matches
-                async with httpx.AsyncClient(timeout=35.0, verify=False) as client:
-                    resp_lens = await client.get(
-                        SEARCHAPI_URL,
-                        params={
-                            "engine": "google_lens",
-                            "url": image_url,
-                            "gl": "in",
-                            "hl": "en",
-                            "location": "India",
-                            "api_key": active_key,
-                        },
-                    )
-                    if resp_lens.status_code == 200:
-                        data = resp_lens.json()
-                        lens_matches = data.get("visual_matches", []) + data.get("exact_matches", [])
-                        logger.info(f"[URLComparison] Google Lens discovered {len(lens_matches)} visual matches")
-                        for item in lens_matches:
-                            cand_title = item.get("title") or ""
-                            cand_url = item.get("link") or item.get("source_link") or ""
-                            cand_seller = item.get("source") or item.get("seller")
-                            cand_thumb = (
-                                item.get("thumbnail")
-                                or (item.get("image", {}).get("link") if isinstance(item.get("image"), dict) else item.get("image"))
-                                or item.get("original_image")
-                            )
-
-                            snippet_p, snippet_mrp, snippet_disc = self._extract_lens_pricing(item)
-
-                            if cand_title and cand_url and cand_url.startswith("http"):
-                                results.append({
-                                    "title": cand_title,
-                                    "url": cand_url,
-                                    "seller": cand_seller,
-                                    "image_url": cand_thumb,
-                                    "snippet_price": snippet_p,
-                                    "snippet_mrp": snippet_mrp,
-                                    "snippet_disc": snippet_disc,
-                                    "is_visual_match": True,
-                                })
-                    else:
-                        logger.warn(f"[URLComparison] Google Lens API returned HTTP {resp_lens.status_code}: {resp_lens.text[:200]}")
-            except Exception as e:
-                logger.warn(f"[URLComparison] Google Lens visual discovery failed: {e}")
-
-        # 2. Fallback Strategy: Google Shopping via SearchApi (if visual matches returned fewer than 2)
-        if len(results) < 2 and active_key and search_query:
-            try:
-                async with httpx.AsyncClient(timeout=20.0, verify=False) as client:
-                    resp_shop = await client.get(
-                        SEARCHAPI_URL,
-                        params={
-                            "engine": "google_shopping",
+                async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+                    resp_shop = await client.post(
+                        "https://google.serper.dev/shopping",
+                        headers={"X-API-KEY": serper_key, "Content-Type": "application/json"},
+                        json={
                             "q": search_query,
                             "gl": "in",
                             "hl": "en",
-                            "location": "India",
-                            "api_key": active_key,
-                        }
+                            "num": 20,
+                        },
                     )
                     if resp_shop.status_code == 200:
                         data = resp_shop.json()
-                        for item in data.get("shopping_results", []):
-                            link = item.get("link") or item.get("product_link") or item.get("offers_link")
+                        for item in data.get("shopping", []):
                             cand_title = item.get("title") or ""
-                            cand_seller = item.get("seller") or item.get("source")
-                            snippet_p, snippet_mrp, snippet_disc = self._extract_lens_pricing(item)
-                            if cand_title and link and link.startswith("http"):
-                                results.append({
-                                    "title": cand_title,
-                                    "url": link,
-                                    "seller": cand_seller,
-                                    "image_url": item.get("thumbnail"),
-                                    "snippet_price": snippet_p,
-                                    "snippet_mrp": snippet_mrp,
-                                    "snippet_disc": snippet_disc,
-                                    "is_visual_match": False,
-                                })
-            except Exception as e:
-                logger.warn(f"[URLComparison] Google Shopping discovery failed: {e}")
+                            cand_seller = item.get("source") or item.get("seller") or ""
+                            cand_thumb = item.get("imageUrl") or ""
+                            cand_link = item.get("link") or ""
+                            p_val = _parse_inr_price(item.get("price"))
 
-        # 3. Fallback Strategy: Google Organic Search on SearchApi (if shopping returned fewer than 2)
-        if len(results) < 2 and active_key and search_query:
-            try:
-                async with httpx.AsyncClient(timeout=20.0, verify=False) as client:
-                    resp_google = await client.get(
-                        SEARCHAPI_URL,
-                        params={
-                            "engine": "google",
-                            "q": f"{search_query} buy online India Flipkart AJIO Meesho",
-                            "gl": "in",
-                            "hl": "en",
-                            "location": "India",
-                            "api_key": active_key,
-                        }
-                    )
-                    if resp_google.status_code == 200:
-                        data = resp_google.json()
-                        for item in data.get("organic_results", []):
-                            link = item.get("link") or ""
-                            cand_title = item.get("title") or ""
-                            cand_seller = item.get("source")
-                            p_val, s_mrp, s_disc = self._parse_snippet_pricing(cand_title, item.get("snippet", ""))
-                            rich = item.get("rich_snippet", {})
-                            if not p_val and isinstance(rich, dict):
-                                top = rich.get("top", {})
-                                if isinstance(top, dict):
-                                    exts = top.get("detected_extensions", {})
-                                    if "price" in exts:
-                                        p_val = _parse_inr_price(exts["price"])
-                            if cand_title and link and link.startswith("http"):
+                            if cand_title and (p_val and p_val >= 100):
                                 results.append({
                                     "title": cand_title,
-                                    "url": link,
+                                    "url": cand_link,
                                     "seller": cand_seller,
-                                    "image_url": item.get("thumbnail"),
+                                    "image_url": cand_thumb,
                                     "snippet_price": p_val,
-                                    "snippet_mrp": s_mrp,
-                                    "snippet_disc": s_disc,
-                                    "is_visual_match": False,
+                                    "snippet_mrp": None,
+                                    "snippet_disc": None,
+                                    "is_visual_match": True,
                                 })
             except Exception as e:
-                logger.warn(f"[URLComparison] Google organic discovery failed: {e}")
-
-        # 3. Tertiary Fallback Meta-Search with DuckDuckGo
-        if len(results) < 2:
-            try:
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-                }
-                async with httpx.AsyncClient(timeout=5.0, headers=headers) as fb_client:
-                    for fb_q in [
-                        f"{search_query} buy online India Flipkart AJIO Meesho Tata CLiQ Myntra",
-                    ]:
-                        r_fb = await fb_client.post("https://lite.duckduckgo.com/lite/", data={"q": fb_q})
-                        if r_fb.status_code == 200:
-                            from bs4 import BeautifulSoup
-                            soup = BeautifulSoup(r_fb.text, "html.parser")
-                            rows = soup.select("table tr")
-                            i = 0
-                            while i < len(rows):
-                                tr = rows[i]
-                                a_link = tr.select_one("a.result-link")
-                                if a_link:
-                                    raw_link = a_link.get("href", "")
-                                    real_link = raw_link
-                                    if "uddg=" in raw_link:
-                                        m_u = re.search(r"uddg=([^&]+)", raw_link)
-                                        if m_u:
-                                            real_link = unquote(m_u.group(1))
-
-                                    t_text = a_link.get_text(strip=True)
-                                    s_text = ""
-                                    if i + 1 < len(rows):
-                                        s_td = rows[i + 1].select_one("td.result-snippet")
-                                        if s_td:
-                                            s_text = s_td.get_text(strip=True)
-
-                                    p_price, p_mrp, p_disc = self._parse_snippet_pricing(t_text, s_text)
-
-                                    if real_link.startswith("http") and t_text:
-                                        results.append({
-                                            "title": t_text,
-                                            "url": real_link,
-                                            "seller": None,
-                                            "image_url": None,
-                                            "snippet_price": p_price,
-                                            "snippet_mrp": p_mrp,
-                                            "snippet_disc": p_disc,
-                                            "is_visual_match": False,
-                                        })
-                                    i += 2
-                                else:
-                                    i += 1
-            except Exception as fb_err:
-                logger.warn(f"[URLComparison] Fallback discovery error: {fb_err}")
+                logger.warn(f"[URLComparison] Serper shopping discovery failed: {e}")
 
         return results
 
@@ -812,8 +654,9 @@ class URLProductComparisonService:
         cand_title_norm = _normalize_text(cand_title)
         cand_tokens = _extract_tokens(cand_title)
 
-        # 1. Reject non-product pages and search category listings
-        if any(bad in cand_url.lower() for bad in ["/search", "/category", "/all-products", "/collection", "/tag", "youtube.com", "instagram.com", "/s?k=", "/pl/"]):
+        # 1. Reject non-product pages and search category listings (allow valid shopping offer links)
+        is_shopping_link = "google.serper.dev" in cand_url or "google.com/search?ibp=oshop" in cand_url or "google.com/shopping" in cand_url
+        if not is_shopping_link and any(bad in cand_url.lower() for bad in ["/search", "/category", "/all-products", "/collection", "/tag", "youtube.com", "instagram.com", "/s?k=", "/pl/"]):
             return False, 0.0, "Non-product URL"
 
         categories = {"kurta", "kurti", "dress", "top", "shirt", "tshirt", "jeans", "trousers", "pants", "palazzo", "skirt", "saree", "lehenga", "jacket", "blazer", "coat", "sweater", "hoodie", "shorts", "jumpsuit", "suit"}

@@ -1,9 +1,17 @@
+from pathlib import Path
+from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Literal
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+ENV_PATH = BASE_DIR / ".env"
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=str(ENV_PATH) if ENV_PATH.exists() else ".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
 
     app_name: str = "FitMe"
     environment: str = "development"
@@ -24,7 +32,7 @@ class Settings(BaseSettings):
     gpu_mode: Literal["runpod", "local", "aws"] = "runpod"
     anthropic_api_key: str = ""
     openai_api_key: str = ""
-    openai_model: str = "gpt-4o"
+    openai_model: str = "gpt-6-luna"
     stripe_secret_key: str = ""
     firebase_credentials_path: str = "./firebase/fitme-3ac94-firebase-adminsdk-fbsvc-5ec19c616f.json"
     anonymous_website_user_email: str = "testtryon_user@example.com"
@@ -39,7 +47,8 @@ class Settings(BaseSettings):
     vertex_project_id: str = "fitme-3ac94"
     vertex_location: str = "us-central1"
 
-    # Visual Search API configuration
+    # Visual Search & Price Comparison API configuration
+    serper_api_key: str = "e419c57800dd5904e09d00f0dd399c3cce7b40ff"
     searchapi_api_key: str = "PPfe3AziK1FGR2btbHcSYgAy"
     serpapi_api_key: str = "PPfe3AziK1FGR2btbHcSYgAy"
 
@@ -56,6 +65,13 @@ class Settings(BaseSettings):
 from functools import lru_cache
 
 def get_settings() -> Settings:
-    return Settings()
+    s = Settings()
+    if s.is_production and s.jwt_secret_key == "change-this-in-production":
+        import logging
+        logging.getLogger("FitMe").critical(
+            "CRITICAL SECURITY ALERT: JWT_SECRET_KEY is using the default development key in production! "
+            "Set a strong random JWT_SECRET_KEY in your Railway environment variables."
+        )
+    return s
 
 settings = get_settings()

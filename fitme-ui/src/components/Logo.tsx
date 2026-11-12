@@ -22,9 +22,9 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
   },
   fitPart: {
-    color: Colors.foreground,
+    color: '#1D1D1F',
   },
   mePart: {
-    color: Colors.accent,
+    color: '#A96A47',
   },
 });

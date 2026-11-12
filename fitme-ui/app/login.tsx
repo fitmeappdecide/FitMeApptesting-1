@@ -4,6 +4,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as WebBrowser from 'expo-web-browser';
 import { Ionicons } from '@expo/vector-icons';
 import { Logo } from '../src/components/Logo';
 import { Colors, Spacing, Radii } from '../src/constants/theme';
@@ -160,12 +161,24 @@ export default function Login() {
     }
   };
 
-  const handleTerms = () => {
-    Linking.openURL('https://fitme.app/terms');
+  const handleTerms = async () => {
+    try {
+      await WebBrowser.openBrowserAsync('https://fitmefashion.com/terms-and-conditions', {
+        presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+      });
+    } catch {
+      Linking.openURL('https://fitmefashion.com/terms-and-conditions');
+    }
   };
 
-  const handlePrivacy = () => {
-    Linking.openURL('https://fitme.app/privacy');
+  const handlePrivacy = async () => {
+    try {
+      await WebBrowser.openBrowserAsync('https://fitmefashion.com/privacy-policy', {
+        presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+      });
+    } catch {
+      Linking.openURL('https://fitmefashion.com/privacy-policy');
+    }
   };
 
   return (

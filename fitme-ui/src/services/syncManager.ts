@@ -19,6 +19,7 @@ import {
 import { useUserStore } from './userStore';
 import { useLooksStore, mapHistoryItemToLocalJob, mapLocalJobToHistoryItem } from './looksStore';
 import { useSavedPhotosStore, mapSavedPhotoToLocalPhoto, mapLocalPhotoToSavedPhoto } from './savedPhotosStore';
+import { useAVAStore } from './avaStore';
 import { getAVAConversations } from './avaService';
 
 export interface SyncDomainResult {
@@ -261,7 +262,8 @@ class SyncManagerService {
 
   // ─── DOMAIN 4: AVA CONVERSATIONS ────────────────────────────────────
   private async syncAVAConversations(userId: string, epoch: number): Promise<number> {
-    const convs = await getAVAConversations();
+    await useAVAStore.getState().fetchConversations();
+    const convs = useAVAStore.getState().conversations;
 
     if (
       getSessionEpoch() !== epoch ||

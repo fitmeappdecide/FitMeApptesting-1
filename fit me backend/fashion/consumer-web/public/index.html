@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Legal & Privacy Center — FitMe</title>
+  <meta name="description" content="Official Legal and Privacy documentation for FitMe AI Virtual Try-On.">
+  <link rel="canonical" href="https://fitmefashion.com">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #FAF7F2;
+      --card-bg: #FFFFFF;
+      --text-main: #1C1917;
+      --text-muted: #6B7280;
+      --accent: #936B1E;
+      --border: #E8E2D9;
+      --radius: 16px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text-main);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      line-height: 1.6;
+      padding: 60px 20px 80px;
+    }
+    .container {
+      max-width: 680px;
+      margin: 0 auto;
+      text-align: center;
+    }
+    .brand-title {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 3rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      font-size: 1.05rem;
+      color: var(--text-muted);
+      margin-bottom: 40px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 40px;
+      text-align: left;
+    }
+    @media (max-width: 600px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+    .doc-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      text-decoration: none;
+      color: inherit;
+      transition: all 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .doc-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+      border-color: var(--accent);
+    }
+    .doc-card h2 {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 1.5rem;
+      color: var(--text-main);
+      margin-bottom: 8px;
+    }
+    .doc-card p {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+      flex-grow: 1;
+    }
+    .doc-card .action-link {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--accent);
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .support-card {
+      background: #FFFFFF;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 30px;
+      margin-bottom: 40px;
+    }
+    .support-card h3 {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 1.4rem;
+      margin-bottom: 10px;
+    }
+    .support-card p {
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+    }
+    .email-link {
+      color: var(--accent);
+      font-weight: 600;
+      text-decoration: none;
+      font-size: 1.05rem;
+    }
+    .email-link:hover { text-decoration: underline; }
+    footer {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="brand-title">FitMe</div>
+    <p class="subtitle">Legal, Privacy & Compliance Center</p>
+
+    <div class="grid">
+      <a href="privacy-policy.html" class="doc-card">
+        <div>
+          <h2>Privacy Policy</h2>
+          <p>Learn how FitMe collects, protects, and encrypts your photos, and our strict policy against public AI model training.</p>
+        </div>
+        <div class="action-link">Read Privacy Policy &rarr;</div>
+      </a>
+
+      <a href="terms-and-conditions.html" class="doc-card">
+        <div>
+          <h2>Terms of Service</h2>
+          <p>Review user content standards, license terms, AI simulation disclaimers, and account rules.</p>
+        </div>
+        <div class="action-link">Read Terms of Service &rarr;</div>
+      </a>
+    </div>
+
+    <div class="support-card">
+      <h3>Need Help or Data Assistance?</h3>
+      <p>Have questions about your account, data deletion, or virtual try-on processing?</p>
+      <a href="mailto:fitme.appsupport@gmail.com" class="email-link">fitme.appsupport@gmail.com</a>
+    </div>
+
+    <footer>
+      &copy; 2026 FitMe. All rights reserved. &bull; <a href="https://fitmefashion.com" style="color:var(--text-muted); text-decoration:none;">fitmefashion.com</a>
+    </footer>
+  </div>
+</body>
+</html>

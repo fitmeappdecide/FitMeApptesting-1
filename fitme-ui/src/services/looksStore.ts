@@ -167,11 +167,13 @@ export const useLooksStore = create<LooksState>()(
             );
 
             if (
-              get().cachedUserId !== activeUserId ||
               mappedGen.length > 0 ||
-              mappedSaved.length > 0
+              mappedSaved.length > 0 ||
+              (get().cachedUserId !== activeUserId && get().generatedLooks.length === 0)
             ) {
               get().hydrateFromLocalLooks(mappedGen, mappedSaved, activeUserId);
+            } else if (get().cachedUserId !== activeUserId) {
+              set({ cachedUserId: activeUserId });
             }
           }
         } catch (sqliteErr) {
@@ -185,8 +187,11 @@ export const useLooksStore = create<LooksState>()(
 
         const isSameUser = get().cachedUserId === activeUserId;
         const hasExisting =
-          isSameUser && (get().generatedLooks.length > 0 || get().savedLooks.length > 0);
-        if (!hasExisting || !isSameUser) {
+          (isSameUser || get().cachedUserId === null) &&
+          (get().generatedLooks.length > 0 || get().savedLooks.length > 0);
+
+        // Only show full-screen blocking loader if user has NO local data whatsoever
+        if (!hasExisting) {
           set({ loading: true });
         }
         if (forceRefresh) {

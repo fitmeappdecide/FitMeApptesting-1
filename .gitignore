@@ -18,4 +18,6 @@ fitme_dev.db
 scratch/
 .pytest_cache/
 fitme-ui/test_*.js
-
+.env
+.env.*
+*.env

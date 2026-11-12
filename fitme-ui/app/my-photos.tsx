@@ -77,12 +77,9 @@ export default function MyPhotos() {
         );
       } else {
         Alert.alert(
-          'Upgrade to Store More Photos',
-          `Free accounts can store up to ${FREE_LIMIT} photos. Upgrade to Pro to store up to ${PREMIUM_LIMIT}.`,
-          [
-            { text: 'Not Now', style: 'cancel' },
-            { text: 'Upgrade to Pro', onPress: () => router.push('/subscription' as any) },
-          ],
+          'Photo Limit Reached',
+          `You have reached the maximum of ${FREE_LIMIT} model photos. Please delete an existing photo to upload a new one.`,
+          [{ text: 'OK' }],
         );
       }
       return;

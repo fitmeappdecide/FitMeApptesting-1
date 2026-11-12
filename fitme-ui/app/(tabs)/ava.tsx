@@ -2,24 +2,35 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput,
   ScrollView, KeyboardAvoidingView, Platform, Keyboard, Image,
-  ActivityIndicator, Linking, Alert, Modal, Animated, Easing, Dimensions
+  ActivityIndicator, Linking, Alert, Modal, Animated, Easing, Dimensions, Clipboard,
+  BackHandler
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import * as WebBrowser from 'expo-web-browser';
 import { Colors, Spacing, Radii } from '../../src/constants/theme';
 
 const resolveStoreUrl = (rawUrl?: string, itemTitle?: string, platform?: string): string => {
   let url = (rawUrl || '').trim();
-  const searchTitle = itemTitle || 'fashion outfit';
-  const encodedQ = encodeURIComponent(searchTitle.trim());
 
-  // Check if url is a broken dummy placeholder path (e.g. /product/linen-shirt-01) or bare homepages
+  // Clean itemTitle to eliminate noise words like "(42) by Myntra", "Online in India", etc.
+  const rawTitle = itemTitle || 'fashion outfit';
+  const cleanTitle = rawTitle
+    .replace(/\([\s\S]*?\)/g, ' ')
+    .replace(/\[[\s\S]*?\]/g, ' ')
+    .replace(/(?:\bby\s+(?:myntra|ajio|amazon|flipkart|meesho|zara|h&m)\b|online\s+in\s+india|at\s+best\s+price|best\s+price|buy\s+now|mrp)/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim() || rawTitle.trim();
+  const encodedQ = encodeURIComponent(cleanTitle);
+
+  // Check if url is a broken dummy placeholder path, bare homepage, or generic Google search link
+  const isGoogle = /^https?:\/\/(?:www\.)?google\.(?:com|co\.in)/i.test(url);
   const isDummyPath = /\/product\/[^\/]+-\d{2}$/i.test(url) || /linen-shirt-01|chino-trousers|white-sneakers-03|anarkali-kurta-set-01/i.test(url);
   const isBareDomain = /^(https?:\/\/(?:www\.)?(myntra\.com|ajio\.com|amazon\.in))\/?$/i.test(url);
 
-  if (!url || isDummyPath || isBareDomain) {
+  if (!url || isGoogle || isDummyPath || isBareDomain) {
     const plat = (platform || (url.includes('ajio') ? 'ajio' : 'myntra')).toLowerCase();
     if (plat.includes('ajio')) {
       return `https://www.ajio.com/search/?text=${encodedQ}`;
@@ -34,37 +45,72 @@ const resolveStoreUrl = (rawUrl?: string, itemTitle?: string, platform?: string)
   return url;
 };
 
+const isDirectPdpUrl = (url?: string): boolean => {
+  if (!url || !url.startsWith('http')) return false;
+  const isSearchPage = /\/s\?|\/search|\/collections\/|\/category\//i.test(url);
+  if (isSearchPage) return false;
+  const isAmazonPdp = /\/(?:dp|gp\/product)\/[A-Z0-9]{10}/i.test(url);
+  const isMyntraPdp = /\/buy(?:\?|$)/i.test(url);
+  const isAjioPdp = /\/p\/\d+/i.test(url);
+  const isFlipkartPdp = /\/p\/[a-zA-Z0-9]+/i.test(url);
+  const isBrandPdp = /\/products?\/[a-zA-Z0-9\-]+/i.test(url);
+  return isAmazonPdp || isMyntraPdp || isAjioPdp || isFlipkartPdp || isBrandPdp;
+};
+
 const openProductUrl = async (url?: string, itemTitle?: string, platform?: string) => {
-  const targetUrl = resolveStoreUrl(url, itemTitle, platform);
+  let targetUrl = (url || '').trim();
+
+  // If not already a direct product page, resolve the exact direct merchant PDP on-demand
+  if (!isDirectPdpUrl(targetUrl) && itemTitle) {
+    try {
+      const res = await resolveExactProductUrl(itemTitle, platform, targetUrl);
+      if (res?.direct_url && res.direct_url.startsWith('http')) {
+        targetUrl = res.direct_url;
+      }
+    } catch (_) {}
+  }
+
+  // Fallback to resolveStoreUrl if resolution failed or empty
+  if (!targetUrl || !targetUrl.startsWith('http')) {
+    targetUrl = resolveStoreUrl(url, itemTitle, platform);
+  }
+
   if (!targetUrl) return;
+
+  // Primary: Open in-app browser (SFSafariViewController on iOS / Chrome Custom Tabs on Android)
+  // This is 100% reliable, never throws "Unable to open URL", and lets the user purchase directly.
   try {
-    const canOpen = await Linking.canOpenURL(targetUrl).catch(() => false);
-    if (canOpen) {
-      await Linking.openURL(targetUrl);
-    } else {
-      await Linking.openURL(targetUrl).catch(() => {
-        Alert.alert('Store Link', 'Unable to open merchant store page on this device.');
-      });
-    }
-  } catch (err) {
-    console.warn('[AVA SHOP] Linking.openURL failed:', err);
-    Alert.alert('Store Link', 'Unable to open merchant store page.');
+    await WebBrowser.openBrowserAsync(targetUrl, {
+      presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+      toolbarColor: '#000000',
+      controlsColor: '#FFFFFF',
+    });
+  } catch (webErr) {
+    // Secondary fallback: Native System Linking
+    try {
+      const canOpen = await Linking.canOpenURL(targetUrl).catch(() => false);
+      if (canOpen) {
+        await Linking.openURL(targetUrl).catch(() => {});
+      }
+    } catch (_) {}
   }
 };
 import {
   sendAVAMessage,
   streamAVAMessage,
+  abortActiveAVAChat,
   getAVAConversations,
   getAVAMessages,
+  getLocalAVAMessages,
   deleteAVAConversation,
+  renameAVAConversation,
+  resolveExactProductUrl,
   AVAOutfitCard,
   AVAConversationSummary,
   AVAMessageItem,
-  getAVAPreferences,
-  updateAVAPreferences,
-  AVAPreferences,
 } from '../../src/services/avaService';
 import { useUserStore } from '../../src/services/userStore';
+import { useAVAStore } from '../../src/services/avaStore';
 
 const getCategoryFallbackImage = (title?: string) => {
   const lower = (title || '').toLowerCase();
@@ -81,13 +127,50 @@ const getCategoryFallbackImage = (title?: string) => {
     return 'https://images.unsplash.com/photo-1610030469983-98e550d6193c?auto=format&fit=crop&w=600&q=80';
   }
   if (lower.includes('blazer') || lower.includes('suit') || lower.includes('coat')) {
-    return 'https://images.unsplash.com/photo-1591047139829-d91aecb6caea?auto=format&fit=crop&w=600&q=80';
+    return 'https://images.unsplash.com/photo-1548883354-7622d03aca27?auto=format&fit=crop&w=600&q=80';
   }
   if (lower.includes('shirt') || lower.includes('tee') || lower.includes('t-shirt') || lower.includes('top')) {
     return 'https://images.unsplash.com/photo-1602810318383-e386cc2a3ccf?auto=format&fit=crop&w=600&q=80';
   }
   return 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80';
 };
+
+const CATEGORY_THUMBNAILS = {
+  college: 'https://images.unsplash.com/photo-1596755094514-f87e34085b2c?w=300',
+  wedding: 'https://images.unsplash.com/photo-1594938298603-c8148c4dae35?w=300',
+  suit: 'https://images.unsplash.com/photo-1594938298603-c8148c4dae35?w=300',
+  groom: 'https://images.unsplash.com/photo-1594938298603-c8148c4dae35?w=300',
+  office: 'https://images.unsplash.com/photo-1434389677669-e08b4cac3105?w=300',
+  capsule: 'https://images.unsplash.com/photo-1434389677669-e08b4cac3105?w=300',
+  blazer: 'https://images.unsplash.com/photo-1548883354-7622d03aca27?w=300',
+  ethnic: 'https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=300',
+  lehenga: 'https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=300',
+  kurta: 'https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=300',
+  rate: 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=300',
+  selfie: 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=300',
+  streetwear: 'https://images.unsplash.com/photo-1552374196-1ab2a1c593e8?w=300',
+  default: 'https://images.unsplash.com/photo-1489987707025-afc232f7ea0f?w=300',
+};
+
+function getConversationThumbnail(conv: AVAConversationSummary): string {
+  const text = `${conv.title || ''} ${conv.last_message || ''}`.toLowerCase();
+  if (text.includes('college') || text.includes('campus') || text.includes('streetwear')) {
+    return CATEGORY_THUMBNAILS.college;
+  }
+  if (text.includes('wedding') || text.includes('groom') || text.includes('suit') || text.includes('navy')) {
+    return CATEGORY_THUMBNAILS.wedding;
+  }
+  if (text.includes('office') || text.includes('capsule') || text.includes('work') || text.includes('blazer')) {
+    return CATEGORY_THUMBNAILS.office;
+  }
+  if (text.includes('ethnic') || text.includes('lehenga') || text.includes('saree') || text.includes('kurta')) {
+    return CATEGORY_THUMBNAILS.ethnic;
+  }
+  if (text.includes('rate') || text.includes('score') || text.includes('mirror') || text.includes('selfie')) {
+    return CATEGORY_THUMBNAILS.rate;
+  }
+  return CATEGORY_THUMBNAILS.default;
+}
 
 function SafeProductImage({ uri, title, style }: { uri?: string; title?: string; style: any }) {
   const [hasError, setHasError] = useState(false);
@@ -147,6 +230,7 @@ type Msg = {
   id: string;
   role: 'user' | 'ava';
   text: string;
+  imageUri?: string;
   outfits?: AVAOutfitCard[];
   actions?: string[];
   isError?: boolean;
@@ -162,10 +246,30 @@ function AvaIcon({ size = 20, color = '#FFFFFF' }: { size?: number; color?: stri
   );
 }
 
+// Sanitizer to eliminate creepy blog-style lecture headers, checklists, and vein/sunburn quizzes
+export function cleanCreepyStylistText(text: string): string {
+  if (!text) return '';
+  let cleaned = text
+    .replace(/I'm unable to analyze skin tone from images\.?\s*(However,\s*)?/gi, '')
+    .replace(/(?:^|\n)#*\s*Explore Your Closet[\s\S]*?(?=(?:(?:^|\n)#*\s*Plan Your Next Outfit|(?:^|\n)#*\s*Accessorize Thoughtfully|(?:^|\n)#*\s*Shopping List|$))/gi, '')
+    .replace(/(?:^|\n)#*\s*Plan Your Next Outfit[\s\S]*?(?=(?:(?:^|\n)#*\s*Accessorize Thoughtfully|(?:^|\n)#*\s*Shopping List|$))/gi, '')
+    .replace(/(?:^|\n)#*\s*Accessorize Thoughtfully[\s\S]*?(?=(?:(?:^|\n)#*\s*Shopping List|$))/gi, '')
+    .replace(/(?:^|\n)#*\s*Shopping List[\s\S]*?$/gi, '')
+    .replace(/Finding Your Undertone[\s\S]*?(?=(?:Power Colors|Palette|Recommended Outfits|\*\*Power Colors|\n\n###|$))/gi, '')
+    .replace(/\d+\.\s*\*\*Vein Test\*\*:[^\n]*\n(?:[^\n]*\n)*/gi, '')
+    .replace(/\d+\.\s*\*\*Sun Reaction\*\*:[^\n]*\n(?:[^\n]*\n)*/gi, '')
+    .replace(/\d+\.\s*\*\*Jewelry Test\*\*:[^\n]*\n(?:[^\n]*\n)*/gi, '')
+    .replace(/\d+\.\s*\*\*Identify Key Pieces\*\*:[^\n]*\n(?:[^\n]*\n)*/gi, '')
+    .replace(/\d+\.\s*\*\*Set Aside Non-Complementary Colors\*\*:[^\n]*\n(?:[^\n]*\n)*/gi, '')
+    .trim();
+
+  return cleaned;
+}
+
 // Inline Markdown Parser for bold (**text**), italics (*text*), and badges (`badge`)
 function renderFormattedInlineText(text: string, baseStyle: any, boldStyle: any) {
   const parts: React.ReactNode[] = [];
-  const regex = /(\*\*.*?\*\*|\*.*?\*|`.*?`)/g;
+  const regex = /(\*\*[^*]+?\*\*|\*[^*]+?\*|`[^`]+?`)/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -186,7 +290,7 @@ function renderFormattedInlineText(text: string, baseStyle: any, boldStyle: any)
       );
     } else if (token.startsWith('*') && token.endsWith('*')) {
       parts.push(
-        <Text key={`i_${match.index}`} style={[baseStyle, { fontStyle: 'italic', color: '#D4D4D8' }]}>
+        <Text key={`i_${match.index}`} style={[baseStyle, { fontStyle: 'italic', color: Colors.mutedForeground }]}>
           {token.slice(1, -1)}
         </Text>
       );
@@ -211,10 +315,11 @@ function renderFormattedInlineText(text: string, baseStyle: any, boldStyle: any)
   return parts;
 }
 
-// Authentic ChatGPT Recommendation Card Row (Exact layout from ChatGPT screenshots)
+// Authentic ChatGPT Recommendation Card Row (Clean ChatGPT Layout)
 function ChatGPTRecommendationCard({
   index,
   title,
+  slot,
   badge,
   description,
   bestFor,
@@ -226,6 +331,7 @@ function ChatGPTRecommendationCard({
 }: {
   index: number;
   title: string;
+  slot?: string;
   badge?: string;
   description?: string;
   bestFor?: string;
@@ -235,82 +341,160 @@ function ChatGPTRecommendationCard({
   onPressShop?: () => void;
   onPressTryOn?: () => void;
 }) {
+  const storeName = platform ? platform.trim() : '';
+  const itemSlot = slot || badge;
+  const metaParts: string[] = [];
+  if (price !== undefined && price !== null && Number(price) > 0) {
+    metaParts.push(`₹${price}`);
+  }
+  if (storeName) {
+    metaParts.push(storeName);
+  }
+  if (itemSlot) {
+    metaParts.push(itemSlot);
+  }
+  const metaString = metaParts.join(' · ');
+
   return (
-    <View style={styles.gptCardRow}>
+    <View style={styles.styleRow}>
       {/* Left Thumbnail Image */}
-      <View style={styles.gptCardImgWrap}>
-        <SafeProductImage
-          uri={imageUrl}
-          title={title}
-          style={styles.gptCardThumb}
-        />
-        {platform && (
-          <View style={styles.gptPlatformTag}>
-            <Text style={styles.gptPlatformTagText}>{platform.toUpperCase()}</Text>
-          </View>
-        )}
-      </View>
+      {imageUrl ? (
+        <View style={styles.styleRowImgWrap}>
+          <SafeProductImage
+            uri={imageUrl}
+            title={title}
+            style={styles.gptCardThumb}
+          />
+        </View>
+      ) : null}
 
       {/* Right Details Column */}
-      <View style={styles.gptCardContent}>
-        <TouchableOpacity
-          activeOpacity={onPressShop ? 0.75 : 1}
-          onPress={onPressShop}
-        >
-          <Text style={styles.gptCardTitle} numberOfLines={2}>
-            {index}. {title}
-          </Text>
-        </TouchableOpacity>
+      <View style={styles.styleRowContent}>
+        <Text style={styles.styleRowTitle}>
+          {index}. {title}
+        </Text>
 
-        {badge ? (
+        {metaString ? (
+          <Text style={styles.styleRowBudget}>
+            {metaString}
+          </Text>
+        ) : null}
+
+        {description ? <Text style={styles.styleRowDesc}>{description}</Text> : null}
+        {bestFor ? <Text style={styles.styleRowWhy}>{bestFor}</Text> : null}
+
+        {onPressShop ? (
+          <TouchableOpacity activeOpacity={0.7} onPress={onPressShop}>
+            <Text style={styles.styleRowLink} numberOfLines={1}>
+              Shop {storeName ? `on ${storeName}` : 'product'} ↗
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+
+
+      </View>
+    </View>
+  );
+}
+
+
+// ChatGPT-style outfit style row (borderless: photo left, details right)
+function OutfitStyleRow({
+  index,
+  outfit,
+  onTryOn,
+}: {
+  index: number;
+  outfit: AVAOutfitCard;
+  onTryOn: () => void;
+}) {
+  const heroItem = outfit.items[0];
+  const heroUri = heroItem?.image || heroItem?.image_url;
+  const lo = outfit.budget_min;
+  const hi = outfit.budget_max;
+
+  return (
+    <View style={styles.styleRow}>
+      <View style={styles.styleRowImgWrap}>
+        <SafeProductImage uri={heroUri} title={heroItem?.title || outfit.name} style={styles.gptCardThumb} />
+      </View>
+      <View style={styles.styleRowContent}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4, flexWrap: "wrap" }}>
           <View style={styles.gptBadgePill}>
-            <Text style={styles.gptBadgeText}>{badge}</Text>
+            <Text style={styles.gptBadgeText}>LOOK 0{index}{outfit.tag ? ` • ${outfit.tag.toUpperCase()}` : ""}</Text>
           </View>
-        ) : null}
-
-        {description ? (
-          <Text style={styles.gptCardDesc} numberOfLines={3}>
-            {description}
-          </Text>
-        ) : null}
-
-        {bestFor ? (
-          <Text style={styles.gptCardBestFor} numberOfLines={2}>
-            <Text style={{ fontWeight: '700', color: Colors.foreground }}>Best for: </Text>
-            {bestFor}
-          </Text>
-        ) : null}
-
-        {/* Action Row */}
-        <View style={styles.gptCardActions}>
-          {price !== undefined && price !== null && Number(price) > 0 ? (
-            <View style={styles.gptPriceTag}>
-              <Text style={styles.gptPriceText}>₹{price}</Text>
-            </View>
-          ) : null}
-
-          {onPressTryOn ? (
-            <TouchableOpacity
-              style={styles.gptActionBtnTryOn}
-              onPress={onPressTryOn}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="sparkles" size={12} color={Colors.primaryForeground} />
-              <Text style={styles.gptActionBtnTryOnText}>Try On</Text>
-            </TouchableOpacity>
-          ) : null}
-
-          {onPressShop ? (
-            <TouchableOpacity
-              style={styles.gptActionBtnShop}
-              onPress={onPressShop}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="open-outline" size={12} color={Colors.foreground} />
-              <Text style={styles.gptActionBtnShopText}>View</Text>
-            </TouchableOpacity>
-          ) : null}
         </View>
+        <Text style={styles.styleRowTitle}>{outfit.name}</Text>
+        {outfit.description ? <Text style={styles.styleRowDesc}>{outfit.description}</Text> : null}
+        {outfit.why ? <Text style={styles.styleRowWhy}>{outfit.why}</Text> : null}
+        {hi ? (
+          <Text style={styles.styleRowBudget}>
+            Budget: ₹{lo && lo !== hi ? `${Math.round(lo).toLocaleString("en-IN")}–₹${Math.round(hi).toLocaleString("en-IN")}` : Math.round(hi).toLocaleString("en-IN")}
+          </Text>
+        ) : null}
+        <View style={{ marginTop: 4, gap: 4 }}>
+          {outfit.items.slice(0, 3).map((item, i) => {
+            const url = item.affiliate_url || item.canonical_product_url;
+            const label = item.title || item.name || "product";
+            return (
+              <TouchableOpacity
+                key={i}
+                activeOpacity={0.7}
+                onPress={() => openProductUrl(url, label, item.seller || item.retailer)}
+              >
+                <Text style={styles.styleRowLink} numberOfLines={1}>Shop {label} ↗</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+      </View>
+    </View>
+  );
+}
+
+// ChatGPT-style tappable follow-up question card
+function FollowUpQuestionCard({
+  outfits,
+  onContinue,
+}: {
+  outfits: AVAOutfitCard[];
+  onContinue: (message: string) => void;
+}) {
+  const looks = outfits.map((o) => o.name);
+  const budgetCap = Math.max(...outfits.map((o) => o.budget_max || 0));
+  const coverOptions = ['Full outfit including shoes', 'Clothes only — I already have shoes'];
+  const [look, setLook] = useState(looks[0]);
+  const [cover, setCover] = useState(coverOptions[0]);
+
+  const renderGroup = (title: string, options: string[], value: string, set: (v: string) => void) => (
+    <View style={styles.followUpGroup}>
+      <Text style={styles.followUpGroupTitle}>{title}</Text>
+      {options.map((opt) => (
+        <TouchableOpacity key={opt} style={styles.followUpOption} activeOpacity={0.7} onPress={() => set(opt)}>
+          <View style={styles.followUpRadio}>
+            {value === opt ? <View style={styles.followUpRadioDot} /> : null}
+          </View>
+          <Text style={styles.followUpOptionText}>{opt}</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+
+  return (
+    <View style={{ marginTop: 14 }}>
+      <Text style={styles.chatGptSectionHeading}>Want me to pick the actual products?</Text>
+      <View style={styles.followUpCard}>
+        {renderGroup('Choose your preferred look', looks, look, setLook)}
+        <View style={styles.followUpDivider} />
+        {renderGroup(budgetCap ? `What should ₹${budgetCap} cover?` : 'What should the budget cover?', coverOptions, cover, setCover)}
+        <TouchableOpacity
+          style={styles.followUpContinue}
+          activeOpacity={0.85}
+          onPress={() => onContinue(`I'd like the ${look} look. Please pick the actual products — ${cover}.`)}
+        >
+          <Text style={styles.followUpContinueText}>Continue</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -337,88 +521,141 @@ function ChatMessageRenderer({
       return (
         <View style={styles.typingIndicatorRow}>
           <ActivityIndicator size="small" color={Colors.primary} />
-          <Text style={styles.typingIndicatorText}>{streamStatus || 'Ava 4o is styling...'}</Text>
+          <Text style={styles.typingIndicatorText}>{streamStatus || 'Ava is styling...'}</Text>
         </View>
       );
     }
-    return null;
+    return (
+      <View style={{ gap: 6 }}>
+        <Text style={styles.chatGptAvaText}>
+          Here are curated pieces styled especially for you based on our live catalog.
+        </Text>
+      </View>
+    );
   }
 
-  // Split text by double line-breaks into distinct paragraphs
-  const rawParagraphs = text.split(/\n\s*\n/);
-  let cardCount = 0;
+  // Split text by double line-breaks into distinct blocks
+  const sanitizedText = cleanCreepyStylistText(text);
+  const rawParagraphs = sanitizedText.split(/\n\s*\n/);
+  const isCurrentStreaming = isStreaming && msgId === streamingMsgId;
 
   return (
-    <View style={{ gap: 8 }}>
+    <View style={{ gap: 10 }}>
       {rawParagraphs.map((para, pIdx) => {
         const trimmed = para.trim();
         if (!trimmed) return null;
+        const isLastBlock = pIdx === rawParagraphs.length - 1;
 
-        // 1. Check if paragraph is a section heading (### Heading, **Heading**)
+        // 1. Level 1 Heading (# Title)
+        if (trimmed.startsWith('# ') && !trimmed.startsWith('## ')) {
+          return (
+            <Text key={`h1_${pIdx}`} style={styles.chatGptH1}>
+              {trimmed.replace(/^#\s+/, '')}
+            </Text>
+          );
+        }
+
+        // 2. Level 2 Heading (## Title)
+        if (trimmed.startsWith('## ') && !trimmed.startsWith('### ')) {
+          return (
+            <Text key={`h2_${pIdx}`} style={styles.chatGptH2}>
+              {trimmed.replace(/^##\s+/, '')}
+            </Text>
+          );
+        }
+
+        // 3. Level 3 Heading (### Title or **Bold Title**)
         if (
-          trimmed.startsWith('###') ||
-          trimmed.startsWith('##') ||
+          trimmed.startsWith('### ') ||
           (trimmed.startsWith('**') && trimmed.endsWith('**') && trimmed.length < 60 && !trimmed.includes('\n')) ||
           trimmed.toLowerCase().includes('my top recommendations') ||
           trimmed.toLowerCase().includes('curated recommendations')
         ) {
           const cleanHeading = trimmed.replace(/^#+\s*/, '').replace(/^\*\*|\*\*$/g, '');
           return (
-            <Text key={`head_${pIdx}`} style={styles.chatGptSectionHeading}>
+            <Text key={`h3_${pIdx}`} style={styles.chatGptH3}>
               {cleanHeading}
             </Text>
           );
         }
 
-        // 2. Check if paragraph starts with a numbered item (e.g. "1. " or "### 1. ")
-        const numberedMatch = trimmed.match(/^(?:###\s*)?(\d+)\.\s+([^\n]+)/);
-        if (numberedMatch) {
-          cardCount++;
-          const itemNum = parseInt(numberedMatch[1], 10);
-          const rawTitle = numberedMatch[2].replace(/\*\*/g, '').trim();
-          const restOfPara = trimmed.substring(numberedMatch[0].length).trim();
-
-          let badge: string | undefined = undefined;
-          let description = '';
-          let bestFor: string | undefined = undefined;
-
-          const lines = restOfPara.split('\n').map((l) => l.trim()).filter(Boolean);
-          for (const line of lines) {
-            if (line.startsWith('`') && line.endsWith('`')) {
-              badge = line.slice(1, -1);
-            } else if (line.toLowerCase().startsWith('best for:') || line.toLowerCase().startsWith('**best for:**')) {
-              bestFor = line.replace(/^\*{0,2}best for:\*{0,2}\s*/i, '').trim();
-            } else if (!badge && line.startsWith('**') && line.includes(':')) {
-              badge = line.replace(/\*\*/g, '').replace(':', '').trim();
-            } else {
-              description = description ? `${description} ${line}` : line;
-            }
-          }
-
-          if (!description && restOfPara && !bestFor) {
-            description = restOfPara;
-          }
-
-          description = description.replace(/\*\*/g, '').trim();
-
+        // 4. Blockquotes (> text)
+        if (trimmed.startsWith('>')) {
+          const quoteContent = trimmed.replace(/^>\s*/, '');
           return (
-            <ChatGPTRecommendationCard
-              key={`card_${pIdx}`}
-              index={itemNum || cardCount}
-              title={rawTitle}
-              badge={badge}
-              description={description}
-              bestFor={bestFor}
-            />
+            <View key={`bq_${pIdx}`} style={styles.chatGptBlockquote}>
+              <Text style={styles.chatGptBlockquoteText}>
+                {renderFormattedInlineText(quoteContent, styles.chatGptBlockquoteText, styles.chatGptBoldText)}
+                {isCurrentStreaming && isLastBlock ? (
+                  <Text style={styles.streamingCursor}> ▊</Text>
+                ) : null}
+              </Text>
+            </View>
           );
         }
 
-        // 3. Regular markdown paragraph with bold/italic styling
+        // 5. Multi-line or single-line list detection (bullet or numbered)
+        const lines = trimmed.split('\n');
+        const hasListItems = lines.some((l) => /^\s*([-*•]|\d+\.)\s+/.test(l));
+
+        if (hasListItems) {
+          return (
+            <View key={`list_${pIdx}`} style={styles.chatGptListBlock}>
+              {lines.map((line, lIdx) => {
+                const lTrimmed = line.trim();
+                if (!lTrimmed) return null;
+                const isLastLine = isLastBlock && lIdx === lines.length - 1;
+
+                const bulletMatch = lTrimmed.match(/^[-*•]\s+(.*)$/);
+                const numMatch = lTrimmed.match(/^(\d+\.)\s+(.*)$/);
+
+                if (bulletMatch) {
+                  return (
+                    <View key={`li_${lIdx}`} style={styles.chatGptListItemRow}>
+                      <Text style={styles.chatGptBulletSymbol}>•</Text>
+                      <Text style={[styles.chatGptListItemText, isError && styles.errorBubbleText]}>
+                        {renderFormattedInlineText(bulletMatch[1], styles.chatGptListItemText, styles.chatGptBoldText)}
+                        {isCurrentStreaming && isLastLine ? (
+                          <Text style={styles.streamingCursor}> ▊</Text>
+                        ) : null}
+                      </Text>
+                    </View>
+                  );
+                }
+
+                if (numMatch) {
+                  return (
+                    <View key={`num_${lIdx}`} style={styles.chatGptListItemRow}>
+                      <Text style={styles.chatGptListNumSymbol}>{numMatch[1]}</Text>
+                      <Text style={[styles.chatGptListItemText, isError && styles.errorBubbleText]}>
+                        {renderFormattedInlineText(numMatch[2], styles.chatGptListItemText, styles.chatGptBoldText)}
+                        {isCurrentStreaming && isLastLine ? (
+                          <Text style={styles.streamingCursor}> ▊</Text>
+                        ) : null}
+                      </Text>
+                    </View>
+                  );
+                }
+
+                return (
+                  <Text key={`sub_${lIdx}`} style={[styles.chatGptAvaText, isError && styles.errorBubbleText]}>
+                    {renderFormattedInlineText(lTrimmed, styles.chatGptAvaText, styles.chatGptBoldText)}
+                    {isCurrentStreaming && isLastLine ? (
+                      <Text style={styles.streamingCursor}> ▊</Text>
+                    ) : null}
+                  </Text>
+                );
+              })}
+            </View>
+          );
+        }
+
+        // 6. Regular markdown paragraph with bold/italic styling
         return (
           <Text key={`p_${pIdx}`} style={[styles.chatGptAvaText, isError && styles.errorBubbleText]}>
             {renderFormattedInlineText(trimmed, styles.chatGptAvaText, styles.chatGptBoldText)}
-            {isStreaming && msgId === streamingMsgId && pIdx === rawParagraphs.length - 1 ? (
-              <Text style={styles.streamingCursor}> ▌</Text>
+            {isCurrentStreaming && isLastBlock ? (
+              <Text style={styles.streamingCursor}> ▊</Text>
             ) : null}
           </Text>
         );
@@ -442,13 +679,12 @@ const WELCOME_MSG: Msg = {
   text: "Hi — I'm AVA, your FitMe AI fashion agent. What look are we curating today? Ask for college, wedding, ethnic, or office outfits from Myntra or AJIO, compare prices, or try looks on!",
 };
 
-const SCREEN_WIDTH = Dimensions.get('window').width;
-const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.8, 320);
-
 export default function Ava() {
   const router = useRouter();
+  const navigation = useNavigation();
   const { initialQuery } = useLocalSearchParams<{ initialQuery?: string }>();
-  const [messages, setMessages] = useState<Msg[]>([WELCOME_MSG]);
+  const [currentView, setCurrentView] = useState<'hub' | 'chat'>('hub');
+  const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [activeOutfit, setActiveOutfit] = useState<AVAOutfitCard | undefined>(undefined);
@@ -460,33 +696,111 @@ export default function Ava() {
   // Selected Image State for Photo Picker
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
   const [selectedImageBase64, setSelectedImageBase64] = useState<string | null>(null);
-
-  // Drawer & Search State
-  const [drawerVisible, setDrawerVisible] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [conversations, setConversations] = useState<AVAConversationSummary[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
+  // Recent Conversations State (from local Zustand store backed by SQLite + AsyncStorage)
+  const conversations = useAVAStore((s) => s.conversations);
+  const loadingHistory = useAVAStore((s) => s.loading);
+  const fetchConversations = useAVAStore((s) => s.fetchConversations);
+  const removeConversation = useAVAStore((s) => s.removeConversation);
+  const renameConversationInStore = useAVAStore((s) => s.renameConversationInStore);
   const [historyError, setHistoryError] = useState<string | null>(null);
 
-  // Style DNA & Memory Profile State
-  const [styleDnaVisible, setStyleDnaVisible] = useState(false);
-  const [stylePreferences, setStylePreferences] = useState<AVAPreferences | null>(null);
-  const [loadingStylePreferences, setLoadingStylePreferences] = useState(false);
+  // Rename Conversation Modal State
+  const [renameModalVisible, setRenameModalVisible] = useState(false);
+  const [convToRename, setConvToRename] = useState<AVAConversationSummary | null>(null);
+  const [renameText, setRenameText] = useState('');
 
   // Safe area insets for iOS status bar / Dynamic Island positioning
   const insets = useSafeAreaInsets();
 
-  // Animation values for smooth drawer sliding
-  const drawerAnim = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
-  const backdropAnim = useRef(new Animated.Value(0)).current;
-
   // Keyboard & Layout State
   const [isKeyboardVisible, setKeyboardVisible] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
+  const inputRef = useRef<TextInput>(null);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const lastScrollTimeRef = useRef<number>(0);
+  const typewriterTimerRef = useRef<any>(null);
+
+  const triggerSmoothScroll = (force = false) => {
+    const now = Date.now();
+    if (force || now - lastScrollTimeRef.current > 110) {
+      lastScrollTimeRef.current = now;
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (typewriterTimerRef.current) {
+        clearInterval(typewriterTimerRef.current);
+        typewriterTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleStopStream = () => {
+    if (typewriterTimerRef.current) {
+      clearInterval(typewriterTimerRef.current);
+      typewriterTimerRef.current = null;
+    }
+    abortActiveAVAChat();
+    setLoading(false);
+    setIsStreaming(false);
+    setStreamingMsgId(null);
+    setStreamStatus(null);
+  };
+
+  const handleUserMessageLongPress = (msg: Msg) => {
+    if (loading || isStreaming) return;
+    Alert.alert(
+      'Message Options',
+      undefined,
+      [
+        {
+          text: 'Edit Message',
+          onPress: () => {
+            setEditingMessageId(msg.id);
+            setInput(msg.text);
+            setTimeout(() => inputRef.current?.focus(), 100);
+          },
+        },
+        {
+          text: 'Copy Text',
+          onPress: () => {
+            if (msg.text) {
+              Clipboard.setString(msg.text);
+            }
+          },
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  };
 
   // Floating custom bottom tab bar clearance (matching CustomTabBar in _layout.tsx)
-  // barWrapper bottom = Math.max(insets.bottom, 20/14) + bar height (60) + camera dome (16)
   const floatingTabBarHeight = Math.max(insets.bottom, Platform.OS === 'ios' ? 20 : 14) + 76;
+
+  // Toggle tab bar display: hidden in chat view, visible in hub view
+  useEffect(() => {
+    if (currentView === 'chat') {
+      navigation.setOptions({ tabBarStyle: { display: 'none' } });
+    } else {
+      navigation.setOptions({ tabBarStyle: { display: 'flex' } });
+    }
+  }, [currentView, navigation]);
+
+  // Handle hardware back button on Android to return to Hub
+  useEffect(() => {
+    const onBackPress = () => {
+      if (currentView === 'chat') {
+        setCurrentView('hub');
+        loadHistoryList();
+        return true;
+      }
+      return false;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
+  }, [currentView]);
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -504,159 +818,200 @@ export default function Ava() {
   const currentUserId = useUserStore((s) => s.profile?.user_id);
   const currentUserEmail = useUserStore((s) => s.profile?.email);
 
-  // Whenever the active authenticated user switches or logs in/out, purge local state and load fresh
+  // When user switches or logs in/out, clear active thread and sync fresh
   useEffect(() => {
-    setStylePreferences(null);
     setConversationId(undefined);
-    setConversations([]);
-    setMessages([
-      {
-        id: 'msg_welcome',
-        role: 'ava',
-        text: "Hi! I'm Ava, your AI personal stylist and shopping assistant. Ask me to style an outfit, find clothes for any event, or critique a look!",
-      },
-    ]);
+    setMessages([]);
+    setCurrentView('hub');
     loadInitialChatHistory();
   }, [currentUserId, currentUserEmail]);
 
   // Handle deep link / navigation with initialQuery
   useEffect(() => {
     if (initialQuery && typeof initialQuery === 'string' && initialQuery.trim()) {
+      setCurrentView('chat');
       handleSend(initialQuery.trim());
     }
   }, [initialQuery]);
 
   const loadInitialChatHistory = async () => {
     try {
-      setLoadingHistory(true);
-      const convList = await getAVAConversations();
-      setConversations(convList);
-
-      if (convList && convList.length > 0) {
-        const latest = convList[0];
-        await selectConversation(latest.id, false);
-      }
+      await fetchConversations();
     } catch (err: any) {
       console.warn('[AVA UI] Initial history load note:', err.message);
-    } finally {
-      setLoadingHistory(false);
     }
   };
 
   const loadHistoryList = async () => {
     try {
-      setLoadingHistory(true);
       setHistoryError(null);
-      const convList = await getAVAConversations();
-      setConversations(convList);
+      await fetchConversations();
     } catch (err: any) {
       console.error('[AVA UI] Error loading conversations:', err);
       setHistoryError(err.message || 'Unable to load conversations.');
-    } finally {
-      setLoadingHistory(false);
-    }
-  };
-
-  const openDrawer = () => {
-    setDrawerVisible(true);
-    loadHistoryList();
-    Animated.parallel([
-      Animated.timing(drawerAnim, {
-        toValue: 0,
-        duration: 250,
-        easing: Easing.out(Easing.poly(4)),
-        useNativeDriver: true,
-      }),
-      Animated.timing(backdropAnim, {
-        toValue: 1,
-        duration: 250,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  };
-
-  const closeDrawer = () => {
-    Animated.parallel([
-      Animated.timing(drawerAnim, {
-        toValue: -DRAWER_WIDTH,
-        duration: 200,
-        easing: Easing.in(Easing.poly(4)),
-        useNativeDriver: true,
-      }),
-      Animated.timing(backdropAnim, {
-        toValue: 0,
-        duration: 200,
-        useNativeDriver: true,
-      }),
-    ]).start(() => setDrawerVisible(false));
-  };
-
-  const openStyleDnaModal = async () => {
-    setStyleDnaVisible(true);
-    setLoadingStylePreferences(true);
-    try {
-      const data = await getAVAPreferences();
-      setStylePreferences(data);
-    } catch (err) {
-      console.warn('[AVA STYLE DNA] Failed to load preferences:', err);
-    } finally {
-      setLoadingStylePreferences(false);
-    }
-  };
-
-  const closeStyleDnaModal = () => {
-    setStyleDnaVisible(false);
-  };
-
-  const handleRemovePreferenceItem = async (
-    key: 'preferred_fits' | 'preferred_colors' | 'disliked_colors' | 'disliked_items' | 'favorite_brands',
-    itemToRemove: string
-  ) => {
-    if (!stylePreferences) return;
-    const currentList = stylePreferences[key] || [];
-    const updatedList = currentList.filter((item) => item !== itemToRemove);
-    const updated = { ...stylePreferences, [key]: updatedList };
-    setStylePreferences(updated);
-    try {
-      await updateAVAPreferences({ [key]: updatedList });
-    } catch (err) {
-      console.warn('[AVA STYLE DNA] Failed to update preference:', err);
     }
   };
 
   const handleDeleteConversation = async (convId: string) => {
     try {
+      removeConversation(convId);
       await deleteAVAConversation(convId);
-      setConversations((prev) => prev.filter((c) => c.id !== convId));
       if (conversationId === convId) {
         handleNewChat();
+        setCurrentView('hub');
       }
     } catch (err: any) {
       Alert.alert('Error', err.message || 'Failed to delete conversation.');
+      fetchConversations().catch(() => {});
     }
   };
 
-  const selectConversation = async (convId: string, shouldCloseDrawer = true) => {
+  const handleRenameConversation = async (convId: string, newTitle: string) => {
+    const cleanTitle = newTitle.trim();
+    if (!cleanTitle) return;
     try {
-      setLoading(true);
+      renameConversationInStore(convId, cleanTitle);
+      setRenameModalVisible(false);
+      setConvToRename(null);
+      await renameAVAConversation(convId, cleanTitle);
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Failed to rename conversation.');
+      fetchConversations().catch(() => {});
+    }
+  };
+
+  const handleCardMenu = (conv: AVAConversationSummary) => {
+    Alert.alert(
+      conv.title || 'Conversation Options',
+      'Choose an action for this conversation:',
+      [
+        {
+          text: 'Rename Chat',
+          onPress: () => {
+            setConvToRename(conv);
+            setRenameText(conv.title);
+            setRenameModalVisible(true);
+          },
+        },
+        {
+          text: 'Delete Chat',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Delete Conversation',
+              'Are you sure you want to permanently delete this conversation?',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Delete',
+                  style: 'destructive',
+                  onPress: () => handleDeleteConversation(conv.id),
+                },
+              ]
+            );
+          },
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  };
+
+  const mapAVAMessageItemsToUI = (items: AVAMessageItem[]): Msg[] => {
+    return items.map((m: AVAMessageItem) => {
+      const payload = m.structured_payload || {};
+      let rawText = m.text || payload.message || '';
+      let cleanedText = rawText.replace(/^\[Photo attached\]\s*/i, '');
+
+      // Sanitize any legacy robotic refusals or creepy blog headers/questionnaires
+      if (m.sender !== 'user') {
+        cleanedText = cleanCreepyStylistText(cleanedText);
+
+        if (!cleanedText && rawText) {
+          cleanedText = "Based on your portrait, you have a beautiful warm, radiant complexion with stunning natural contrast. Earthy jewel tones like terracotta, royal emerald, olive, mustard, and warm cream flatter your features effortlessly!";
+        }
+      }
+
+      const imgUri =
+        (m as any).image_url ||
+        payload.image_url ||
+        (m as any).imageUri ||
+        payload.imageUri ||
+        undefined;
+
+      return {
+        id: m.id,
+        role: m.sender === 'user' ? 'user' : 'ava',
+        text: cleanedText,
+        imageUri: imgUri,
+        outfits: payload.outfits || undefined,
+        actions: payload.suggested_actions || undefined,
+      };
+    });
+  };
+
+  const selectConversation = async (convId: string) => {
+    try {
       setConversationId(convId);
 
+      // 1. Instant 0ms RAM lookup from Zustand + AsyncStorage
+      const ramMsgs = useAVAStore.getState().messagesByConversationId[convId];
+      if (ramMsgs && ramMsgs.length > 0) {
+        const loadedMsgs = mapAVAMessageItemsToUI(ramMsgs);
+        setMessages(loadedMsgs);
+        for (let i = loadedMsgs.length - 1; i >= 0; i--) {
+          if (loadedMsgs[i].outfits && loadedMsgs[i].outfits!.length > 0) {
+            setActiveOutfit(loadedMsgs[i].outfits![0]);
+            break;
+          }
+        }
+        setLoading(false);
+        setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 50);
+
+        // Silent non-blocking background sync
+        getAVAMessages(convId).then((res) => {
+          if (res.messages && res.messages.length > 0) {
+            const freshMsgs = mapAVAMessageItemsToUI(res.messages);
+            setMessages(freshMsgs);
+          }
+        }).catch(() => {});
+        return;
+      }
+
+      // 2. Instant SQLite fallback lookup (0ms local disk)
+      const localMsgs = await getLocalAVAMessages(convId);
+      if (localMsgs && localMsgs.length > 0) {
+        useAVAStore.getState().setConversationMessages(convId, localMsgs);
+        const loadedMsgs = mapAVAMessageItemsToUI(localMsgs);
+        setMessages(loadedMsgs);
+        for (let i = loadedMsgs.length - 1; i >= 0; i--) {
+          if (loadedMsgs[i].outfits && loadedMsgs[i].outfits!.length > 0) {
+            setActiveOutfit(loadedMsgs[i].outfits![0]);
+            break;
+          }
+        }
+        setLoading(false);
+        setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 50);
+
+        // Silent non-blocking background sync
+        getAVAMessages(convId).then((res) => {
+          if (res.messages && res.messages.length > 0) {
+            useAVAStore.getState().setConversationMessages(convId, res.messages);
+            const freshMsgs = mapAVAMessageItemsToUI(res.messages);
+            setMessages(freshMsgs);
+          }
+        }).catch(() => {});
+        return;
+      }
+
+      // 3. Fallback for cache-miss (brand-new installation): fetch remote with loading indicator
+      setLoading(true);
       const res = await getAVAMessages(convId);
 
       if (res.messages && res.messages.length > 0) {
-        const loadedMsgs: Msg[] = res.messages.map((m: AVAMessageItem) => {
-          const payload = m.structured_payload || {};
-          return {
-            id: m.id,
-            role: m.sender === 'user' ? 'user' : 'ava',
-            text: m.text || payload.message || '',
-            outfits: payload.outfits || undefined,
-            actions: payload.suggested_actions || undefined,
-          };
-        });
+        useAVAStore.getState().setConversationMessages(convId, res.messages);
+        const loadedMsgs = mapAVAMessageItemsToUI(res.messages);
         setMessages(loadedMsgs);
 
-        // Find last active outfit context
         for (let i = loadedMsgs.length - 1; i >= 0; i--) {
           if (loadedMsgs[i].outfits && loadedMsgs[i].outfits!.length > 0) {
             setActiveOutfit(loadedMsgs[i].outfits![0]);
@@ -664,12 +1019,13 @@ export default function Ava() {
           }
         }
       } else {
-        setMessages([WELCOME_MSG]);
+        setMessages([]);
       }
-      if (shouldCloseDrawer) closeDrawer();
     } catch (err: any) {
       console.error(`[AVA UI] Error loading conversation ${convId}:`, err);
-      Alert.alert('Conversation Error', `Failed to load conversation messages: ${err.message}`);
+      if (messages.length === 0) {
+        Alert.alert('Conversation Error', `Failed to load conversation messages: ${err.message}`);
+      }
     } finally {
       setLoading(false);
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 150);
@@ -681,28 +1037,63 @@ export default function Ava() {
     setActiveOutfit(undefined);
     setSelectedImageUri(null);
     setSelectedImageBase64(null);
-    setMessages([WELCOME_MSG]);
-    closeDrawer();
+    setInput('');
+    setMessages([]);
+    setCurrentView('chat');
+  };
+
+  const handleBackToHub = () => {
+    setCurrentView('hub');
+    loadHistoryList();
+  };
+
+  const handleOpenConversation = async (convId: string) => {
+    setCurrentView('chat');
+    await selectConversation(convId);
+  };
+
+  const handleSuggestionCardPress = (cardType: 'rate' | 'college' | 'ethnic' | 'office') => {
+    setConversationId(undefined);
+    setActiveOutfit(undefined);
+    setMessages([]);
+    setCurrentView('chat');
+
+    if (cardType === 'rate') {
+      setTimeout(() => {
+        handleImageAttachment();
+      }, 100);
+    } else if (cardType === 'college') {
+      handleSend('Can you suggest some college outfits under ₹2500?');
+    } else if (cardType === 'ethnic') {
+      handleSend('Show me some lehengas, sarees and kurtas for a wedding.');
+    } else if (cardType === 'office') {
+      handleSend('Help me build an office capsule wardrobe with versatile blazers.');
+    }
   };
 
   const handleSend = async (textToSend?: string) => {
     const prompt = (textToSend || input).trim();
     if ((!prompt && !selectedImageUri) || loading) return;
 
+    setCurrentView('chat');
+
     const currentImgUri = selectedImageUri;
     const currentImgBase64 = selectedImageBase64;
+    const targetEditId = editingMessageId;
 
     // Reset local input & photo state immediately for smooth UI transition
     setSelectedImageUri(null);
     setSelectedImageBase64(null);
+    setEditingMessageId(null);
     if (!textToSend) setInput('');
 
-    const displayPrompt = prompt || 'Analyze this outfit photo';
+    const displayPrompt = prompt || (currentImgUri ? 'Analyze this outfit photo' : '');
     const userMsgId = `usr_${Date.now()}`;
     const userMsg: Msg = {
       id: userMsgId,
       role: 'user',
-      text: currentImgUri ? `[Photo attached] ${displayPrompt}` : displayPrompt,
+      text: displayPrompt,
+      imageUri: currentImgUri || undefined,
     };
 
     const tempAvaMsgId = `ava_${Date.now()}`;
@@ -714,27 +1105,59 @@ export default function Ava() {
       actions: [],
     };
 
-    setMessages((prev) => [...prev, userMsg, initialAvaMsg]);
+    // If editing a previous message (Option 1-A), truncate history from that message forward
+    if (targetEditId) {
+      setMessages((prev) => {
+        const editIdx = prev.findIndex((m) => m.id === targetEditId);
+        const base = editIdx !== -1 ? prev.slice(0, editIdx) : prev;
+        return [...base, userMsg, initialAvaMsg];
+      });
+    } else {
+      setMessages((prev) => [...prev, userMsg, initialAvaMsg]);
+    }
+
     setLoading(true);
     setIsStreaming(true);
     setStreamingMsgId(tempAvaMsgId);
     setStreamStatus('Thinking...');
 
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+    setTimeout(() => triggerSmoothScroll(true), 80);
+
+    let targetFullText = '';
+    let displayedText = '';
+    let collectedOutfits: AVAOutfitCard[] = [];
+
+    const stopTypewriter = () => {
+      if (typewriterTimerRef.current) {
+        clearInterval(typewriterTimerRef.current);
+        typewriterTimerRef.current = null;
+      }
+    };
+
+    const startTypewriter = () => {
+      if (typewriterTimerRef.current) return;
+      typewriterTimerRef.current = setInterval(() => {
+        if (displayedText.length < targetFullText.length) {
+          const backlog = targetFullText.length - displayedText.length;
+          // Smooth letter/word pacing: 1-2 chars normally, speeding up if buffer builds up
+          const step = backlog > 50 ? 6 : backlog > 20 ? 3 : backlog > 8 ? 2 : 1;
+          displayedText = targetFullText.substring(0, displayedText.length + step);
+          const sanitized = cleanCreepyStylistText(displayedText);
+          setMessages((prev) =>
+            prev.map((m) => (m.id === tempAvaMsgId ? { ...m, text: sanitized } : m))
+          );
+          triggerSmoothScroll();
+        }
+      }, 16);
+    };
 
     try {
-      let currentFullText = '';
-      let collectedOutfits: AVAOutfitCard[] = [];
-
       await streamAVAMessage(
         displayPrompt,
         {
           onToken: (chunk) => {
-            currentFullText += chunk;
-            setMessages((prev) =>
-              prev.map((m) => (m.id === tempAvaMsgId ? { ...m, text: currentFullText } : m))
-            );
-            scrollRef.current?.scrollToEnd({ animated: true });
+            targetFullText += chunk;
+            startTypewriter();
           },
           onStatus: (status) => {
             setStreamStatus(status);
@@ -746,31 +1169,38 @@ export default function Ava() {
             );
           },
           onDone: (resp) => {
+            stopTypewriter();
             if (resp.conversation_id) {
               setConversationId(resp.conversation_id);
             }
             if (resp.outfits && resp.outfits.length > 0) {
               setActiveOutfit(resp.outfits[0]);
             }
+            const sanitizedFull = cleanCreepyStylistText(resp.message || targetFullText || "Here are curated pieces styled especially for you based on our live catalog.");
+
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === tempAvaMsgId
                   ? {
                       ...m,
-                      text: resp.message || currentFullText,
+                      text: sanitizedFull,
                       outfits: resp.outfits && resp.outfits.length > 0 ? resp.outfits : collectedOutfits,
                       actions: resp.suggested_actions,
                     }
                   : m
               )
             );
+            triggerSmoothScroll(true);
+            fetchConversations().catch(() => {});
           },
         },
         conversationId,
         activeOutfit,
-        currentImgBase64 || undefined
+        currentImgBase64 || undefined,
+        currentImgUri || undefined
       );
     } catch (err: any) {
+      stopTypewriter();
       console.error('[AVA UI] BACKEND_API_ERROR:', err);
       const errMsg = err?.message || (typeof err === 'string' ? err : 'Network request failed');
       setMessages((prev) =>
@@ -785,11 +1215,12 @@ export default function Ava() {
         )
       );
     } finally {
+      stopTypewriter();
       setLoading(false);
       setIsStreaming(false);
       setStreamingMsgId(null);
       setStreamStatus(null);
-      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 150);
+      setTimeout(() => triggerSmoothScroll(true), 150);
     }
   };
 
@@ -861,862 +1292,465 @@ export default function Ava() {
     }
   };
 
-  // Filter conversations for Search input
-  const filteredConversations = conversations.filter((c) =>
-    (c.title || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (c.last_message || '').toLowerCase().includes(searchQuery.toLowerCase())
+  const renderSuggestionCards = () => (
+    <View style={styles.chatGptEmptyState}>
+      <View style={styles.chatGptLargeAvatar}>
+        <AvaIcon size={34} color={Colors.primary} />
+      </View>
+      <Text style={styles.chatGptGreetingTitle}>How can I style you today?</Text>
+      <Text style={styles.chatGptGreetingSub}>
+        Ask for personal outfits, color analysis, mirror critique, or live retailer deals
+      </Text>
+
+      <View style={styles.chatGptPromptGrid}>
+        <TouchableOpacity
+          style={styles.chatGptPromptCard}
+          activeOpacity={0.8}
+          onPress={() => handleSuggestionCardPress('rate')}
+        >
+          <View style={styles.chatGptPromptIcon}>
+            <Ionicons name="camera-outline" size={20} color={Colors.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.chatGptPromptCardTitle}>Rate my outfit</Text>
+            <Text style={styles.chatGptPromptCardSub}>Upload mirror selfie for score & tips</Text>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.chatGptPromptCard}
+          activeOpacity={0.8}
+          onPress={() => handleSuggestionCardPress('college')}
+        >
+          <View style={styles.chatGptPromptIcon}>
+            <Ionicons name="school-outline" size={20} color={Colors.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.chatGptPromptCardTitle}>College look under ₹2500</Text>
+            <Text style={styles.chatGptPromptCardSub}>Relaxed everyday streetwear</Text>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.chatGptPromptCard}
+          activeOpacity={0.8}
+          onPress={() => handleSuggestionCardPress('ethnic')}
+        >
+          <View style={styles.chatGptPromptIcon}>
+            <Ionicons name="sparkles-outline" size={20} color={Colors.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.chatGptPromptCardTitle}>Ethnic wedding outfit</Text>
+            <Text style={styles.chatGptPromptCardSub}>Festive lehengas, sarees & kurtas</Text>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.chatGptPromptCard}
+          activeOpacity={0.8}
+          onPress={() => handleSuggestionCardPress('office')}
+        >
+          <View style={styles.chatGptPromptIcon}>
+            <Ionicons name="briefcase-outline" size={20} color={Colors.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.chatGptPromptCardTitle}>Office capsule wardrobe</Text>
+            <Text style={styles.chatGptPromptCardSub}>Versatile blazers & tailored pieces</Text>
+          </View>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
-
-  // Group conversations by date (Today, Yesterday, Older)
-  const now = new Date();
-  const todayStr = now.toDateString();
-  const yest = new Date(now);
-  yest.setDate(yest.getDate() - 1);
-  const yestStr = yest.toDateString();
-
-  const todayList: AVAConversationSummary[] = [];
-  const yestList: AVAConversationSummary[] = [];
-  const olderList: AVAConversationSummary[] = [];
-
-  filteredConversations.forEach((c) => {
-    const d = new Date(c.updated_at || c.created_at);
-    if (d.toDateString() === todayStr) todayList.push(c);
-    else if (d.toDateString() === yestStr) yestList.push(c);
-    else olderList.push(c);
-  });
-
-  const bottomContainerPadding = isKeyboardVisible ? (Platform.OS === 'ios' ? 6 : 4) : floatingTabBarHeight + 10;
-  const drawerTopPadding = Math.max(insets.top, 24);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* AVA Fashion Agent Header matching Image-2 */}
+      {/* Dynamic Header matching Image 1, Image 2, and Image 3 */}
       <View style={styles.headerBar}>
-        <TouchableOpacity
-          style={styles.headerLeftBtn}
-          onPress={openDrawer}
-          accessibilityLabel="Open conversations drawer"
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-        >
-          <Ionicons name="menu-outline" size={26} color={Colors.foreground} />
-        </TouchableOpacity>
+        {currentView === 'hub' ? (
+          <TouchableOpacity
+            style={styles.headerRoundBtn}
+            onPress={handleNewChat}
+            accessibilityLabel="New Chat"
+            activeOpacity={0.8}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="add" size={22} color={Colors.foreground} />
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={styles.headerBackBtn}
+            onPress={handleBackToHub}
+            accessibilityLabel="Back to Conversations"
+            activeOpacity={0.8}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="chevron-back" size={24} color={Colors.foreground} />
+          </TouchableOpacity>
+        )}
 
         <Text style={styles.headerTitle} numberOfLines={1}>
           AVA Fashion Agent
         </Text>
 
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <TouchableOpacity
-            style={styles.headerDnaBadge}
-            onPress={openStyleDnaModal}
-            accessibilityLabel="Style DNA & Memory Profile"
-            activeOpacity={0.75}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons name="sparkles" size={17} color="#BA7B5E" />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.headerAvaBadge}
-            onPress={handleNewChat}
-            accessibilityLabel="New chat with Ava"
-            activeOpacity={0.75}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <AvaIcon size={20} color="#BA7B5E" />
-          </TouchableOpacity>
+        <View
+          style={styles.headerRoundBtn}
+          accessibilityLabel="AVA Fashion Agent"
+        >
+          <AvaIcon size={20} color={Colors.accent} />
         </View>
       </View>
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
-      >
-        <View style={{ flex: 1, paddingBottom: bottomContainerPadding }}>
-          {/* Messages ScrollView */}
+      {/* VIEW 1 & 2: HUB VIEW (Tab bar visible, Composer hidden) */}
+      {currentView === 'hub' ? (
+        conversations.length === 0 ? (
+          /* STATE 1: Empty Hub View (Image 1) */
           <ScrollView
-            ref={scrollRef}
             style={styles.msgScroll}
-            contentContainerStyle={styles.msgContent}
+            contentContainerStyle={[styles.msgContent, { paddingBottom: floatingTabBarHeight + 20 }]}
             showsVerticalScrollIndicator={false}
           >
-            {messages.map((m) => (
-              <View key={m.id} style={{ gap: 8 }}>
-                {m.id === 'msg_welcome' ? (
-                  <View style={styles.chatGptEmptyState}>
-                    <View style={styles.chatGptLargeAvatar}>
-                      <AvaIcon size={34} color={Colors.primary} />
-                    </View>
-                    <Text style={styles.chatGptGreetingTitle}>How can I style you today?</Text>
-                    <Text style={styles.chatGptGreetingSub}>
-                      Ask for personal outfits, color analysis, mirror critique, or live retailer deals
+            {renderSuggestionCards()}
+          </ScrollView>
+        ) : (
+          /* STATE 2: Recent Chats Hub View (Image 2) */
+          <ScrollView
+            style={styles.hubScroll}
+            contentContainerStyle={[styles.hubListContent, { paddingBottom: floatingTabBarHeight + 20 }]}
+            showsVerticalScrollIndicator={false}
+          >
+            {conversations.map((conv) => {
+              const snippetText = conv.last_message
+                ? conv.last_message.startsWith('You: ')
+                  ? conv.last_message
+                  : `You: ${conv.last_message}`
+                : 'Tap to continue conversation';
+
+              return (
+                <TouchableOpacity
+                  key={conv.id}
+                  style={styles.recentChatCard}
+                  activeOpacity={0.75}
+                  onPress={() => handleOpenConversation(conv.id)}
+                >
+                  <View style={styles.recentChatAvatarWrap}>
+                    <AvaIcon size={24} color={Colors.primary} />
+                  </View>
+                  <View style={styles.recentChatInfo}>
+                    <Text style={styles.recentChatTitle} numberOfLines={1}>
+                      {conv.title || 'Outfit styling session'}
                     </Text>
-
-                    <View style={styles.chatGptPromptGrid}>
-                      <TouchableOpacity
-                        style={styles.chatGptPromptCard}
-                        activeOpacity={0.8}
-                        onPress={() => handleImageAttachment()}
-                      >
-                        <View style={styles.chatGptPromptIcon}>
-                          <Ionicons name="camera-outline" size={18} color={Colors.primary} />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.chatGptPromptCardTitle}>Rate my outfit</Text>
-                          <Text style={styles.chatGptPromptCardSub}>Upload mirror selfie for score & tips</Text>
-                        </View>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={styles.chatGptPromptCard}
-                        activeOpacity={0.8}
-                        onPress={() => handleSend('College outfit from Myntra under ₹2500')}
-                      >
-                        <View style={styles.chatGptPromptIcon}>
-                          <Ionicons name="school-outline" size={18} color={Colors.primary} />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.chatGptPromptCardTitle}>College look under ₹2500</Text>
-                          <Text style={styles.chatGptPromptCardSub}>Relaxed everyday streetwear</Text>
-                        </View>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={styles.chatGptPromptCard}
-                        activeOpacity={0.8}
-                        onPress={() => handleSend('Only AJIO. Ethnic wedding outfit under ₹5000')}
-                      >
-                        <View style={styles.chatGptPromptIcon}>
-                          <Ionicons name="sparkles-outline" size={18} color={Colors.primary} />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.chatGptPromptCardTitle}>Ethnic wedding outfit</Text>
-                          <Text style={styles.chatGptPromptCardSub}>Festive lehengas, sarees & kurtas</Text>
-                        </View>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={styles.chatGptPromptCard}
-                        activeOpacity={0.8}
-                        onPress={() => handleSend('Capsule wardrobe for smart-casual office')}
-                      >
-                        <View style={styles.chatGptPromptIcon}>
-                          <Ionicons name="briefcase-outline" size={18} color={Colors.primary} />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.chatGptPromptCardTitle}>Office capsule wardrobe</Text>
-                          <Text style={styles.chatGptPromptCardSub}>Versatile blazers & tailored pieces</Text>
-                        </View>
-                      </TouchableOpacity>
-                    </View>
+                    <Text style={styles.recentChatSnippet} numberOfLines={2}>
+                      {snippetText}
+                    </Text>
                   </View>
-                ) : (
-                  m.role === 'user' ? (
-                    <View style={styles.chatGptUserRow}>
-                      <View style={styles.chatGptUserBubble}>
-                        <Text style={styles.chatGptUserText}>{m.text}</Text>
-                      </View>
-                    </View>
-                  ) : (
-                    <View style={styles.chatGptAvaRow}>
-                      <View style={styles.chatGptAvatarWrap}>
-                        <AvaIcon size={16} color={Colors.primary} />
-                      </View>
-                      <View style={styles.chatGptAvaContent}>
-                        <ChatMessageRenderer
-                          text={m.text}
-                          isStreaming={isStreaming}
-                          streamingMsgId={streamingMsgId}
-                          msgId={m.id}
-                          streamStatus={streamStatus}
-                          isError={m.isError}
-                        />
-                      </View>
-                    </View>
-                  )
-                )}
-
-                {/* Real Curated Outfit / Product Cards in ChatGPT Vertical Order */}
-                {m.outfits && m.outfits.length > 0 && (
-                  <View style={styles.outfitsVerticalWrap}>
-                    {m.outfits.map((outfit) => (
-                      <View key={outfit.id} style={styles.outfitBlock}>
-                        {/* Section Header for the Curated Look */}
-                        <View style={styles.outfitHeaderRow}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.outfitSectionTitle}>{outfit.name || 'Curated Look'}</Text>
-                            <Text style={styles.outfitOccasionSub}>
-                              {(outfit.occasion || 'CASUAL').toUpperCase()} · ₹{outfit.total_price}
-                            </Text>
-                          </View>
-                          <TouchableOpacity
-                            style={styles.outfitTryOnAllBtn}
-                            onPress={() => handleAction('TRY_ON', outfit)}
-                            activeOpacity={0.8}
-                          >
-                            <Ionicons name="sparkles" size={13} color="#FFFFFF" />
-                            <Text style={styles.outfitTryOnAllText}>Try On Look</Text>
-                          </TouchableOpacity>
-                        </View>
-
-                        {/* Inline Virtual Try-On Result Preview if generated */}
-                        {(outfit as any).tryon_image_url && (
-                          <View style={styles.tryonPreviewContainer}>
-                            <Text style={styles.tryonPreviewHeader}>✨ 3D VIRTUAL TRY-ON PREVIEW</Text>
-                            <SafeProductImage
-                              uri={(outfit as any).tryon_image_url}
-                              title="Virtual Try-On Preview"
-                              style={styles.tryonPreviewImage}
-                            />
-                          </View>
-                        )}
-
-                        {/* Vertical Ordered Recommendation Cards (Exact match to ChatGPT in Image 1 and 2) */}
-                        <View style={{ gap: 8, marginTop: 4 }}>
-                          {outfit.items.map((item, idx) => {
-                            const finalOpenUrl = item.affiliate_url || item.canonical_product_url;
-                            const isShoppable =
-                              item.is_shoppable !== false &&
-                              finalOpenUrl &&
-                              !finalOpenUrl.includes('google.') &&
-                              !finalOpenUrl.includes('bing.');
-
-                            return (
-                              <ChatGPTRecommendationCard
-                                key={idx}
-                                index={idx + 1}
-                                title={item.title || item.name || 'Fashion Piece'}
-                                badge={`${(item as any).slot || 'Piece'} · ${item.seller || item.retailer || 'Catalog'}`}
-                                description={(item as any).reason || outfit.reason || `Handpicked ${(item as any).slot || 'piece'} for this ${outfit.occasion || 'style'} silhouette.`}
-                                bestFor={outfit.occasion ? `${outfit.occasion.toUpperCase()} & everyday wear` : undefined}
-                                price={item.price}
-                                imageUrl={item.image || item.image_url}
-                                platform={item.seller || item.retailer}
-                                onPressShop={() => openProductUrl(finalOpenUrl, item.title || item.name, item.seller || item.retailer)}
-                                onPressTryOn={() => handleAction('TRY_ON', outfit)}
-                              />
-                            );
-                          })}
-                        </View>
-
-                        {/* Outfit Quick Actions Bar */}
-                        <View style={styles.outfitActionsRow}>
-                          <TouchableOpacity
-                            style={[styles.cardBtn, styles.saveBtnDark]}
-                            onPress={() => handleAction('SAVE', outfit)}
-                          >
-                            <Ionicons name="bookmark-outline" size={13} color={Colors.foreground} />
-                            <Text style={styles.cardBtnDarkText}>Save Look</Text>
-                          </TouchableOpacity>
-
-                          <TouchableOpacity
-                            style={[styles.cardBtn, styles.cheaperBtnDark]}
-                            onPress={() => handleAction('MAKE_CHEAPER', outfit)}
-                          >
-                            <Ionicons name="pricetag-outline" size={13} color={Colors.primary} />
-                            <Text style={styles.cheaperBtnDarkText}>Make Cheaper</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
-                {/* Suggested Action Pills returned by AVA */}
-                {m.actions && m.actions.length > 0 && (
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    style={{ marginTop: 10 }}
-                    contentContainerStyle={{ gap: 8, paddingHorizontal: 4 }}
+                  <TouchableOpacity
+                    style={styles.recentChatMenuBtn}
+                    onPress={() => handleCardMenu(conv)}
+                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                    accessibilityLabel="Conversation options"
                   >
-                    {m.actions.map((act, actIdx) => (
-                      <TouchableOpacity
-                        key={actIdx}
-                        style={{
-                          backgroundColor: Colors.card,
-                          paddingHorizontal: 12,
-                          paddingVertical: 7,
-                          borderRadius: Radii.pill,
-                          borderWidth: 1,
-                          borderColor: Colors.border,
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          gap: 5,
-                        }}
-                        onPress={() => handleAction(act)}
-                      >
-                        <Ionicons
-                          name={act.toLowerCase().includes('history') ? 'time-outline' : (act.toLowerCase().includes('try') ? 'body-outline' : 'sparkles-outline')}
-                          size={13}
-                          color={Colors.foreground}
-                        />
-                        <Text style={{ fontSize: 12, color: Colors.foreground, fontWeight: '500' }}>
-                          {act}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                )}
-              </View>
-            ))}
+                    <Ionicons name="ellipsis-horizontal" size={20} color={Colors.mutedForeground} />
+                  </TouchableOpacity>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        )
+      ) : (
+        /* VIEW 3: CHAT VIEW (Image 3) (Tab bar hidden, Composer visible) */
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+        >
+          <View style={{ flex: 1 }}>
+            {messages.length === 0 ? (
+              /* Blank Chat (Image 3 with 4 cards & input bar) */
+              <ScrollView
+                style={styles.msgScroll}
+                contentContainerStyle={styles.msgContent}
+                showsVerticalScrollIndicator={false}
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                keyboardShouldPersistTaps="handled"
+              >
+                {renderSuggestionCards()}
+                <View style={{ height: 16 }} />
+              </ScrollView>
+            ) : (
+              /* Active Chat with Message Thread */
+              <ScrollView
+                ref={scrollRef}
+                style={styles.msgScroll}
+                contentContainerStyle={styles.msgContent}
+                showsVerticalScrollIndicator={false}
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                keyboardShouldPersistTaps="handled"
+              >
+                {messages.map((m) => (
+                  <View key={m.id} style={{ gap: 8 }}>
+                    {m.role === 'user' ? (
+                      <View style={styles.chatGptUserRow}>
+                        <TouchableOpacity
+                          style={styles.chatGptUserBubble}
+                          activeOpacity={0.85}
+                          onLongPress={() => handleUserMessageLongPress(m)}
+                          delayLongPress={280}
+                        >
+                          {m.imageUri ? (
+                            <Image
+                              source={{ uri: m.imageUri }}
+                              style={styles.chatGptUserAttachedImage}
+                              resizeMode="cover"
+                            />
+                          ) : null}
+                          {m.text ? <Text style={styles.chatGptUserText}>{m.text}</Text> : null}
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <View style={styles.chatGptAvaRow}>
+                        <View style={styles.chatGptAvatarWrap}>
+                          <AvaIcon size={16} color={Colors.primary} />
+                        </View>
+                        <View style={styles.chatGptAvaContent}>
+                          <ChatMessageRenderer
+                            text={m.text}
+                            isStreaming={isStreaming}
+                            streamingMsgId={streamingMsgId}
+                            msgId={m.id}
+                            streamStatus={streamStatus}
+                            isError={m.isError}
+                          />
 
-            {loading && !streamingMsgId && (
-              <View style={styles.typingIndicatorRow}>
-                <ActivityIndicator size="small" color={Colors.primary} />
-                <Text style={styles.typingIndicatorText}>Ava 4o is styling...</Text>
+
+                        </View>
+                      </View>
+                    )}
+
+                    {/* Outfit Style Rows */}
+                    {m.outfits && m.outfits.length > 0 && m.outfits.some((o) => !!o.description) && (
+                      <View style={{ marginTop: 6 }}>
+                        <Text style={styles.chatGptSectionHeading}>
+                          Curated Lookbook • {m.outfits.length} Styles
+                        </Text>
+                        {m.outfits.map((outfit, oIdx) => (
+                          <OutfitStyleRow
+                            key={outfit.id}
+                            index={oIdx + 1}
+                            outfit={outfit}
+                            onTryOn={() => handleAction('TRY_ON', outfit)}
+                          />
+                        ))}
+                        {!isStreaming && messages[messages.length - 1]?.id === m.id ? (
+                          <FollowUpQuestionCard
+                            outfits={m.outfits}
+                            onContinue={(msg) => handleSend(msg)}
+                          />
+                        ) : null}
+                      </View>
+                    )}
+
+                    {/* Curated Piece Cards */}
+                    {m.outfits && m.outfits.length > 0 && !m.outfits.some((o) => !!o.description) && (
+                      <View style={{ marginTop: 6 }}>
+                        <Text style={styles.chatGptSectionHeading}>
+                          {m.outfits.reduce((acc, o) => acc + (o.items?.length || 0), 0) || m.outfits.length} recommended pieces to consider
+                        </Text>
+                        {m.outfits.map((outfit) => (
+                          <View key={outfit.id}>
+                            {(outfit as any).tryon_image_url && (
+                              <View style={styles.tryonPreviewContainer}>
+                                <Text style={styles.tryonPreviewHeader}>✨ 3D VIRTUAL TRY-ON PREVIEW</Text>
+                                <SafeProductImage
+                                  uri={(outfit as any).tryon_image_url}
+                                  title="Virtual Try-On Preview"
+                                  style={styles.tryonPreviewImage}
+                                />
+                              </View>
+                            )}
+
+                            {outfit.items.map((item, idx) => {
+                              const finalOpenUrl = item.affiliate_url || item.canonical_product_url;
+
+                              return (
+                                <ChatGPTRecommendationCard
+                                  key={idx}
+                                  index={idx + 1}
+                                  title={item.title || item.name || 'Fashion Piece'}
+                                  slot={(item as any).slot || 'Garment'}
+                                  price={item.price}
+                                  imageUrl={item.image || item.image_url}
+                                  platform={item.seller || item.retailer}
+                                  onPressShop={() => openProductUrl(finalOpenUrl, item.title || item.name, item.seller || item.retailer)}
+
+                                />
+                              );
+                            })}
+                          </View>
+                        ))}
+                      </View>
+                    )}
+
+
+                  </View>
+                ))}
+
+                {loading && !streamingMsgId && (
+                  <View style={styles.typingIndicatorRow}>
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                    <Text style={styles.typingIndicatorText}>Ava is styling...</Text>
+                  </View>
+                )}
+
+                <View style={{ height: 20 }} />
+              </ScrollView>
+            )}
+
+            {/* Selected Image Thumbnail Preview Bar */}
+            {selectedImageUri && (
+              <View style={styles.imagePreviewBar}>
+                <View style={styles.imagePreviewWrap}>
+                  <Image source={{ uri: selectedImageUri }} style={styles.imagePreviewThumb} />
+                  <TouchableOpacity
+                    style={styles.imagePreviewRemoveBtn}
+                    onPress={() => {
+                      setSelectedImageUri(null);
+                      setSelectedImageBase64(null);
+                    }}
+                    accessibilityLabel="Remove selected image"
+                    accessibilityRole="button"
+                  >
+                    <Ionicons name="close-circle" size={18} color={Colors.foreground} />
+                  </TouchableOpacity>
+                </View>
               </View>
             )}
 
-            <View style={{ height: 20 }} />
-          </ScrollView>
-
-          {/* Selected Image Thumbnail Preview Bar (Positioned cleanly above composer) */}
-          {selectedImageUri && (
-            <View style={styles.imagePreviewBar}>
-              <View style={styles.imagePreviewWrap}>
-                <Image source={{ uri: selectedImageUri }} style={styles.imagePreviewThumb} />
-                <TouchableOpacity
-                  style={styles.imagePreviewRemoveBtn}
-                  onPress={() => {
-                    setSelectedImageUri(null);
-                    setSelectedImageBase64(null);
-                  }}
-                  accessibilityLabel="Remove selected image"
-                  accessibilityRole="button"
-                >
-                  <Ionicons name="close-circle" size={18} color={Colors.foreground} />
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-
-          {/* ChatGPT-Style Modern Composer Row */}
-          <View style={styles.chatGptComposerContainer}>
-            <View style={styles.chatGptComposerBar}>
-              {/* Attachment Button */}
-              <TouchableOpacity
-                style={styles.chatGptAttachBtn}
-                onPress={handleImageAttachment}
-                accessibilityLabel="Attach photo"
-                accessibilityRole="button"
-              >
-                <Ionicons name="add" size={22} color={Colors.foreground} />
-              </TouchableOpacity>
-
-              {/* Central Text Input */}
-              <TextInput
-                style={styles.chatGptInput}
-                placeholder="Message Ava..."
-                placeholderTextColor={Colors.mutedForeground}
-                value={input}
-                onChangeText={setInput}
-                multiline={true}
-                textAlignVertical="center"
-                accessibilityLabel="Message Ava"
-              />
-
-              {/* Circular Send / Stop Button */}
-              <TouchableOpacity
-                style={[
-                  styles.chatGptSendBtn,
-                  (input.trim().length > 0 || !!selectedImageUri) ? styles.chatGptSendBtnActive : null,
-                  loading ? styles.chatGptSendBtnLoading : null,
-                ]}
-                onPress={() => handleSend()}
-                activeOpacity={0.85}
-                disabled={loading && !isStreaming}
-                accessibilityLabel="Send message"
-                accessibilityRole="button"
-              >
-                {loading ? (
-                  <Ionicons name="square" size={12} color={Colors.primaryForeground} />
-                ) : (
-                  <Ionicons
-                    name="arrow-up"
-                    size={18}
-                    color={input.trim().length > 0 || selectedImageUri ? Colors.primaryForeground : Colors.mutedForeground}
-                  />
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
-
-      {/* ChatGPT-Style Side Conversation Drawer Modal with iOS Status-Bar Safe Area Insets */}
-      {drawerVisible && (
-        <Modal visible={drawerVisible} transparent={true} animationType="none" onRequestClose={closeDrawer}>
-          <View style={styles.drawerOverlay}>
-            {/* Animated Backdrop */}
-            <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closeDrawer}>
-              <Animated.View style={[styles.drawerBackdrop, { opacity: backdropAnim }]} />
-            </TouchableOpacity>
-
-            {/* Slide-out Left Drawer with Safe Top Inset */}
-            <Animated.View
-              style={[
-                styles.drawerContent,
-                { transform: [{ translateX: drawerAnim }], paddingTop: drawerTopPadding },
-              ]}
-            >
-              {/* Drawer Header Row: Logo left, AVA Fashion Agent center, Close button right */}
-              <View style={styles.drawerHeader}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <AvaIcon size={20} color={Colors.accent} />
-                  <Text style={styles.drawerBrandText}>AVA Fashion Agent</Text>
-                </View>
-                <TouchableOpacity onPress={closeDrawer} accessibilityLabel="Close drawer" style={styles.drawerCloseBtn}>
-                  <Ionicons name="close" size={22} color={Colors.foreground} />
-                </TouchableOpacity>
-              </View>
-
-              {/* + New Chat Action Button */}
-              <TouchableOpacity
-                style={styles.newChatBtn}
-                onPress={handleNewChat}
-                activeOpacity={0.7}
-                accessibilityLabel="Start new AVA conversation"
-              >
-                <Ionicons name="add" size={18} color={Colors.accent} />
-                <Text style={styles.newChatBtnText}>New Chat</Text>
-              </TouchableOpacity>
-
-              {/* Style DNA & Memory Profile Drawer Button */}
-              <TouchableOpacity
-                style={styles.styleDnaDrawerBtn}
-                onPress={() => {
-                  closeDrawer();
-                  openStyleDnaModal();
-                }}
-                activeOpacity={0.7}
-                accessibilityLabel="View Style DNA and Memory Profile"
-              >
-                <Ionicons name="sparkles" size={16} color="#BA7B5E" />
-                <Text style={styles.styleDnaDrawerBtnText}>Style DNA & Memory</Text>
-              </TouchableOpacity>
-
-              {/* Search Bar */}
-              <View style={styles.drawerSearchBox}>
-                <Ionicons name="search-outline" size={16} color={Colors.mutedForeground} />
-                <TextInput
-                  style={styles.drawerSearchInput}
-                  placeholder="Search conversations..."
-                  placeholderTextColor={Colors.mutedForeground}
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  accessibilityLabel="Search AVA conversations"
-                />
-                {searchQuery ? (
-                  <TouchableOpacity onPress={() => setSearchQuery('')}>
-                    <Ionicons name="close-circle" size={16} color={Colors.mutedForeground} />
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-
-              {/* Conversations List */}
-              <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingVertical: 12 }}>
-                {loadingHistory ? (
-                  <View style={styles.drawerCenter}>
-                    <ActivityIndicator size="small" color={Colors.primary} />
-                    <Text style={{ marginTop: 8, fontSize: 12, color: Colors.mutedForeground }}>
-                      Loading sessions…
-                    </Text>
-                  </View>
-                ) : historyError ? (
-                  <View style={styles.drawerCenter}>
-                    <Text style={{ color: '#C62828', fontSize: 12, textAlign: 'center' }}>{historyError}</Text>
-                    <TouchableOpacity style={styles.retryBtn} onPress={loadHistoryList}>
-                      <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '600' }}>Retry</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : conversations.length === 0 ? (
-                  <View style={styles.drawerCenter}>
-                    <Text style={{ fontSize: 12, color: Colors.mutedForeground }}>No saved conversations yet.</Text>
-                  </View>
-                ) : (
-                  <>
-                    {todayList.length > 0 && (
-                      <View style={styles.sectionWrap}>
-                        <Text style={styles.sectionHeader}>TODAY</Text>
-                        {todayList.map((item) => (
-                          <View
-                            key={item.id}
-                            style={[
-                              styles.drawerItemRow,
-                              item.id === conversationId && styles.drawerItemActive,
-                              { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-                            ]}
-                          >
-                            <TouchableOpacity
-                              style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8, paddingRight: 6 }}
-                              onPress={() => selectConversation(item.id)}
-                              accessibilityLabel={`Open conversation ${item.title}`}
-                            >
-                              <Ionicons
-                                name="chatbubble-outline"
-                                size={15}
-                                color={item.id === conversationId ? Colors.primary : Colors.mutedForeground}
-                              />
-                              <Text
-                                style={[
-                                  { flex: 1, fontSize: 13, color: item.id === conversationId ? Colors.primary : Colors.foreground },
-                                  item.id === conversationId && styles.drawerItemTitleActive,
-                                ]}
-                                numberOfLines={1}
-                              >
-                                {item.title}
-                              </Text>
-                            </TouchableOpacity>
-
-                            <TouchableOpacity
-                              style={{ padding: 6, opacity: 0.7 }}
-                              onPress={() => handleDeleteConversation(item.id)}
-                              accessibilityLabel={`Delete conversation ${item.title}`}
-                              activeOpacity={0.5}
-                            >
-                              <Ionicons name="trash-outline" size={16} color={Colors.mutedForeground} />
-                            </TouchableOpacity>
-                          </View>
-                        ))}
-                      </View>
-                    )}
-
-                    {yestList.length > 0 && (
-                      <View style={styles.sectionWrap}>
-                        <Text style={styles.sectionHeader}>YESTERDAY</Text>
-                        {yestList.map((item) => (
-                          <View
-                            key={item.id}
-                            style={[
-                              styles.drawerItemRow,
-                              item.id === conversationId && styles.drawerItemActive,
-                              { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-                            ]}
-                          >
-                            <TouchableOpacity
-                              style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8, paddingRight: 6 }}
-                              onPress={() => selectConversation(item.id)}
-                              accessibilityLabel={`Open conversation ${item.title}`}
-                            >
-                              <Ionicons
-                                name="chatbubble-outline"
-                                size={15}
-                                color={item.id === conversationId ? Colors.primary : Colors.mutedForeground}
-                              />
-                              <Text
-                                style={[
-                                  { flex: 1, fontSize: 13, color: item.id === conversationId ? Colors.primary : Colors.foreground },
-                                  item.id === conversationId && styles.drawerItemTitleActive,
-                                ]}
-                                numberOfLines={1}
-                              >
-                                {item.title}
-                              </Text>
-                            </TouchableOpacity>
-
-                            <TouchableOpacity
-                              style={{ padding: 6, opacity: 0.7 }}
-                              onPress={() => handleDeleteConversation(item.id)}
-                              accessibilityLabel={`Delete conversation ${item.title}`}
-                              activeOpacity={0.5}
-                            >
-                              <Ionicons name="trash-outline" size={16} color={Colors.mutedForeground} />
-                            </TouchableOpacity>
-                          </View>
-                        ))}
-                      </View>
-                    )}
-
-                    {olderList.length > 0 && (
-                      <View style={styles.sectionWrap}>
-                        <Text style={styles.sectionHeader}>PREVIOUS CONVERSATIONS</Text>
-                        {olderList.map((item) => (
-                          <View
-                            key={item.id}
-                            style={[
-                              styles.drawerItemRow,
-                              item.id === conversationId && styles.drawerItemActive,
-                              { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-                            ]}
-                          >
-                            <TouchableOpacity
-                              style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8, paddingRight: 6 }}
-                              onPress={() => selectConversation(item.id)}
-                              accessibilityLabel={`Open conversation ${item.title}`}
-                            >
-                              <Ionicons
-                                name="chatbubble-outline"
-                                size={15}
-                                color={item.id === conversationId ? Colors.primary : Colors.mutedForeground}
-                              />
-                              <Text
-                                style={[
-                                  { flex: 1, fontSize: 13, color: item.id === conversationId ? Colors.primary : Colors.foreground },
-                                  item.id === conversationId && styles.drawerItemTitleActive,
-                                ]}
-                                numberOfLines={1}
-                              >
-                                {item.title}
-                              </Text>
-                            </TouchableOpacity>
-
-                            <TouchableOpacity
-                              style={{ padding: 6, opacity: 0.7 }}
-                              onPress={() => handleDeleteConversation(item.id)}
-                              accessibilityLabel={`Delete conversation ${item.title}`}
-                              activeOpacity={0.5}
-                            >
-                              <Ionicons name="trash-outline" size={16} color={Colors.mutedForeground} />
-                            </TouchableOpacity>
-                          </View>
-                        ))}
-                      </View>
-                    )}
-                  </>
-                )}
-              </ScrollView>
-            </Animated.View>
-          </View>
-        </Modal>
-      )}
-
-      {/* Style DNA & Memory Profile Modal */}
-      {styleDnaVisible && (
-        <Modal
-          visible={styleDnaVisible}
-          transparent={true}
-          animationType="slide"
-          onRequestClose={closeStyleDnaModal}
-        >
-          <View style={styles.styleDnaOverlay}>
-            <TouchableOpacity
-              style={styles.styleDnaBackdrop}
-              activeOpacity={1}
-              onPress={closeStyleDnaModal}
-            />
-            <View style={styles.styleDnaSheet}>
-              {/* Header */}
-              <View style={styles.styleDnaHeader}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <View style={styles.styleDnaIconWrap}>
-                    <Ionicons name="sparkles" size={17} color="#BA7B5E" />
-                  </View>
-                  <View>
-                    <Text style={styles.styleDnaTitle}>Style DNA & Memory</Text>
-                    <Text style={styles.styleDnaSubtitle}>
-                      What AVA learns and remembers to tailor recommendations
-                    </Text>
-                  </View>
-                </View>
-                <TouchableOpacity
-                  onPress={closeStyleDnaModal}
-                  style={styles.drawerCloseBtn}
-                  accessibilityLabel="Close Style DNA modal"
-                >
-                  <Ionicons name="close" size={22} color={Colors.foreground} />
-                </TouchableOpacity>
-              </View>
-
-              {loadingStylePreferences ? (
-                <View style={{ paddingVertical: 40, alignItems: 'center' }}>
-                  <ActivityIndicator size="small" color="#BA7B5E" />
-                  <Text style={{ marginTop: 12, fontSize: 13, color: Colors.mutedForeground }}>
-                    Retrieving your Style DNA...
+            {/* Editing Message Banner (Option 1-A) */}
+            {editingMessageId && (
+              <View style={styles.editingBanner}>
+                <View style={styles.editingBannerLeft}>
+                  <Ionicons name="pencil" size={13} color={Colors.primary} />
+                  <Text style={styles.editingBannerText} numberOfLines={1}>
+                    Editing message
                   </Text>
                 </View>
-              ) : (
-                <ScrollView
-                  style={{ maxHeight: 440 }}
-                  showsVerticalScrollIndicator={false}
-                  contentContainerStyle={{ paddingBottom: 16 }}
+                <TouchableOpacity
+                  onPress={() => {
+                    setEditingMessageId(null);
+                    setInput('');
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityLabel="Cancel edit"
                 >
-                  {/* Preferred Fits */}
-                  <View style={styles.dnaSection}>
-                    <View style={styles.dnaSectionTitleRow}>
-                      <Ionicons name="body-outline" size={14} color="#BA7B5E" />
-                      <Text style={styles.dnaSectionTitle}>Preferred Fits & Silhouettes</Text>
-                    </View>
-                    <View style={styles.tagWrap}>
-                      {(stylePreferences?.preferred_fits || []).length > 0 ? (
-                        stylePreferences?.preferred_fits?.map((fit) => (
-                          <View key={fit} style={styles.dnaTag}>
-                            <Text style={styles.dnaTagText}>{fit}</Text>
-                            <TouchableOpacity
-                              onPress={() => handleRemovePreferenceItem('preferred_fits', fit)}
-                              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                            >
-                              <Ionicons name="close" size={13} color={Colors.mutedForeground} />
-                            </TouchableOpacity>
-                          </View>
-                        ))
-                      ) : (
-                        <Text style={styles.dnaEmptyText}>No specific fit preferences yet.</Text>
-                      )}
-                    </View>
-                  </View>
+                  <Ionicons name="close" size={16} color={Colors.mutedForeground} />
+                </TouchableOpacity>
+              </View>
+            )}
 
-                  {/* Favorite Colors */}
-                  <View style={styles.dnaSection}>
-                    <View style={styles.dnaSectionTitleRow}>
-                      <Ionicons name="color-palette-outline" size={14} color="#BA7B5E" />
-                      <Text style={styles.dnaSectionTitle}>Favorite Colors</Text>
-                    </View>
-                    <View style={styles.tagWrap}>
-                      {(stylePreferences?.preferred_colors || []).length > 0 ? (
-                        stylePreferences?.preferred_colors?.map((col) => (
-                          <View key={col} style={styles.dnaTag}>
-                            <Text style={styles.dnaTagText}>{col}</Text>
-                            <TouchableOpacity
-                              onPress={() => handleRemovePreferenceItem('preferred_colors', col)}
-                              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                            >
-                              <Ionicons name="close" size={13} color={Colors.mutedForeground} />
-                            </TouchableOpacity>
-                          </View>
-                        ))
-                      ) : (
-                        <Text style={styles.dnaEmptyText}>No preferred colors stored yet.</Text>
-                      )}
-                    </View>
-                  </View>
+            {/* ChatGPT-Style Modern Composer Row */}
+            <View style={[styles.chatGptComposerContainer, { paddingBottom: isKeyboardVisible ? 6 : Math.max(insets.bottom, 14) }]}>
+              <View style={styles.chatGptComposerBar}>
+                <TouchableOpacity
+                  style={styles.chatGptAttachBtn}
+                  onPress={handleImageAttachment}
+                  accessibilityLabel="Attach photo"
+                  accessibilityRole="button"
+                >
+                  <Ionicons name="add" size={22} color={Colors.foreground} />
+                </TouchableOpacity>
 
-                  {/* Avoid / Disliked Colors */}
-                  <View style={styles.dnaSection}>
-                    <View style={styles.dnaSectionTitleRow}>
-                      <Ionicons name="close-circle-outline" size={14} color="#DC2626" />
-                      <Text style={[styles.dnaSectionTitle, { color: '#DC2626' }]}>Colors to Avoid</Text>
-                    </View>
-                    <View style={styles.tagWrap}>
-                      {(stylePreferences?.disliked_colors || []).length > 0 ? (
-                        stylePreferences?.disliked_colors?.map((col) => (
-                          <View key={col} style={[styles.dnaTag, { borderColor: '#FECACA', backgroundColor: '#FEF2F2' }]}>
-                            <Text style={[styles.dnaTagText, { color: '#DC2626' }]}>{col}</Text>
-                            <TouchableOpacity
-                              onPress={() => handleRemovePreferenceItem('disliked_colors', col)}
-                              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                            >
-                              <Ionicons name="close" size={13} color="#DC2626" />
-                            </TouchableOpacity>
-                          </View>
-                        ))
-                      ) : (
-                        <Text style={styles.dnaEmptyText}>No disliked colors.</Text>
-                      )}
-                    </View>
-                  </View>
+                <TextInput
+                  ref={inputRef}
+                  style={styles.chatGptInput}
+                  placeholder="Message Ava..."
+                  placeholderTextColor={Colors.mutedForeground}
+                  value={input}
+                  onChangeText={setInput}
+                  multiline={true}
+                  textAlignVertical="center"
+                  accessibilityLabel="Message Ava"
+                />
 
-                  {/* Dealbreakers & Disliked Items */}
-                  <View style={styles.dnaSection}>
-                    <View style={styles.dnaSectionTitleRow}>
-                      <Ionicons name="ban-outline" size={14} color="#DC2626" />
-                      <Text style={[styles.dnaSectionTitle, { color: '#DC2626' }]}>Disliked Styles & Dealbreakers</Text>
-                    </View>
-                    <View style={styles.tagWrap}>
-                      {(stylePreferences?.disliked_items || []).length > 0 ? (
-                        stylePreferences?.disliked_items?.map((item) => (
-                          <View key={item} style={[styles.dnaTag, { borderColor: '#FECACA', backgroundColor: '#FEF2F2' }]}>
-                            <Text style={[styles.dnaTagText, { color: '#DC2626' }]}>{item}</Text>
-                            <TouchableOpacity
-                              onPress={() => handleRemovePreferenceItem('disliked_items', item)}
-                              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                            >
-                              <Ionicons name="close" size={13} color="#DC2626" />
-                            </TouchableOpacity>
-                          </View>
-                        ))
-                      ) : (
-                        <Text style={styles.dnaEmptyText}>No dealbreakers logged yet.</Text>
-                      )}
-                    </View>
-                  </View>
+                <TouchableOpacity
+                  style={[
+                    styles.chatGptSendBtn,
+                    (input.trim().length > 0 || !!selectedImageUri) ? styles.chatGptSendBtnActive : null,
+                    (loading || isStreaming) ? styles.chatGptSendBtnLoading : null,
+                  ]}
+                  onPress={() => {
+                    if (loading || isStreaming) {
+                      handleStopStream();
+                    } else {
+                      handleSend();
+                    }
+                  }}
+                  activeOpacity={0.85}
+                  disabled={!loading && !isStreaming && input.trim().length === 0 && !selectedImageUri}
+                  accessibilityLabel={(loading || isStreaming) ? "Stop generating" : "Send message"}
+                  accessibilityRole="button"
+                >
+                  {(loading || isStreaming) ? (
+                    <Ionicons name="square" size={12} color={Colors.primaryForeground} />
+                  ) : (
+                    <Ionicons
+                      name="arrow-up"
+                      size={18}
+                      color={input.trim().length > 0 || selectedImageUri ? Colors.primaryForeground : Colors.mutedForeground}
+                    />
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      )}
 
-                  {/* Favorite Brands & Stores */}
-                  <View style={styles.dnaSection}>
-                    <View style={styles.dnaSectionTitleRow}>
-                      <Ionicons name="pricetag-outline" size={14} color="#BA7B5E" />
-                      <Text style={styles.dnaSectionTitle}>Preferred Brands & Stores</Text>
-                    </View>
-                    <View style={styles.tagWrap}>
-                      {[...(stylePreferences?.favorite_retailers || []), ...(stylePreferences?.favorite_brands || [])].length > 0 ? (
-                        [...(stylePreferences?.favorite_retailers || []), ...(stylePreferences?.favorite_brands || [])].map((b) => (
-                          <View key={b} style={styles.dnaTag}>
-                            <Text style={styles.dnaTagText}>{b}</Text>
-                            <TouchableOpacity
-                              onPress={() => handleRemovePreferenceItem('favorite_brands', b)}
-                              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                            >
-                              <Ionicons name="close" size={13} color={Colors.mutedForeground} />
-                            </TouchableOpacity>
-                          </View>
-                        ))
-                      ) : (
-                        <Text style={styles.dnaEmptyText}>No brand preferences logged.</Text>
-                      )}
-                    </View>
-                  </View>
-
-                  {/* Budget Ceiling */}
-                  {stylePreferences?.budget_range_max ? (
-                    <View style={styles.dnaSection}>
-                      <View style={styles.dnaSectionTitleRow}>
-                        <Ionicons name="wallet-outline" size={14} color="#BA7B5E" />
-                        <Text style={styles.dnaSectionTitle}>Budget Comfort Zone</Text>
-                      </View>
-                      <Text style={{ fontSize: 13, color: Colors.foreground, fontWeight: '600', marginTop: 4 }}>
-                        Up to ₹{stylePreferences.budget_range_max.toLocaleString('en-IN')}
-                      </Text>
-                    </View>
-                  ) : null}
-
-                  {/* Style Archetypes */}
-                  {stylePreferences?.style_dna && Object.keys(stylePreferences.style_dna).length > 0 ? (
-                    <View style={styles.dnaSection}>
-                      <View style={styles.dnaSectionTitleRow}>
-                        <Ionicons name="finger-print-outline" size={14} color="#BA7B5E" />
-                        <Text style={styles.dnaSectionTitle}>Aesthetic Affinities</Text>
-                      </View>
-                      <View style={{ gap: 6, marginTop: 6 }}>
-                        {Object.entries(stylePreferences.style_dna).map(([styleName, score]) => (
-                          <View key={styleName} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <Text style={{ fontSize: 12, color: Colors.foreground, textTransform: 'capitalize' }}>
-                              {styleName}
-                            </Text>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                              <View style={{ width: 100, height: 6, backgroundColor: Colors.secondary, borderRadius: 3, overflow: 'hidden' }}>
-                                <View style={{ width: `${Math.round(score * 100)}%`, height: 6, backgroundColor: '#BA7B5E', borderRadius: 3 }} />
-                              </View>
-                              <Text style={{ fontSize: 11, color: Colors.mutedForeground, width: 34, textAlign: 'right' }}>
-                                {Math.round(score * 100)}%
-                              </Text>
-                            </View>
-                          </View>
-                        ))}
-                      </View>
-                    </View>
-                  ) : null}
-
-                  <View style={styles.dnaNoticeBox}>
-                    <Ionicons name="shield-checkmark-outline" size={14} color="#BA7B5E" />
-                    <Text style={styles.dnaNoticeText}>
-                      AVA continuously updates your Style DNA as you converse, remembering your unique tastes across all chats without extra cost.
-                    </Text>
-                  </View>
-                </ScrollView>
-              )}
-
+      {/* Rename Conversation Modal */}
+      <Modal
+        visible={renameModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setRenameModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.renameModalOverlay}
+        >
+          <View style={styles.renameModalCard}>
+            <Text style={styles.renameModalTitle}>Rename Conversation</Text>
+            <TextInput
+              style={styles.renameModalInput}
+              value={renameText}
+              onChangeText={setRenameText}
+              placeholder="Enter chat title..."
+              placeholderTextColor={Colors.mutedForeground}
+              autoFocus={true}
+              selectTextOnFocus={true}
+            />
+            <View style={styles.renameModalActions}>
               <TouchableOpacity
-                style={styles.dnaDoneBtn}
-                onPress={closeStyleDnaModal}
-                activeOpacity={0.8}
+                style={styles.renameCancelBtn}
+                onPress={() => {
+                  setRenameModalVisible(false);
+                  setConvToRename(null);
+                }}
               >
-                <Text style={styles.dnaDoneBtnText}>Done</Text>
+                <Text style={styles.renameCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.renameSaveBtn}
+                onPress={() => {
+                  if (convToRename) {
+                    handleRenameConversation(convToRename.id, renameText);
+                  }
+                }}
+              >
+                <Text style={styles.renameSaveText}>Save</Text>
               </TouchableOpacity>
             </View>
           </View>
-        </Modal>
-      )}
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1724,7 +1758,7 @@ export default function Ava() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
 
-  // AVA Fashion Agent Header matching Image-2
+  // AVA Fashion Agent Header matching Image 1, Image 2, Image 3
   headerBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1733,21 +1767,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     backgroundColor: Colors.background,
   },
-  headerLeftBtn: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'flex-start',
-  },
-  headerTitle: {
-    flex: 1,
-    fontSize: 18,
-    fontWeight: '600',
-    color: Colors.foreground,
-    textAlign: 'center',
-    letterSpacing: -0.2,
-  },
-  headerAvaBadge: {
+  headerRoundBtn: {
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -1755,12 +1775,152 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  headerBackBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+  },
+  headerTitle: {
+    flex: 1,
+    fontSize: 17,
+    fontWeight: '700',
+    color: Colors.foreground,
+    textAlign: 'center',
+    letterSpacing: -0.2,
+  },
+
+  // Hub Scroll and Content
+  hubScroll: {
+    flex: 1,
+  },
+  hubEmptyContent: {
+    paddingHorizontal: 20,
+    paddingTop: 32,
+    alignItems: 'center',
+  },
+  hubListContent: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+  },
+
+  // Recent Conversation Card (Image 2)
+  recentChatCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 12,
+    marginBottom: 12,
+    gap: 14,
+    shadowColor: Colors.foreground,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  recentChatAvatarWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#F3E4D9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recentChatInfo: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  recentChatTitle: {
+    fontSize: 15.5,
+    fontWeight: '700',
+    color: Colors.foreground,
+    lineHeight: 20,
+  },
+  recentChatSnippet: {
+    fontSize: 13,
+    color: Colors.mutedForeground,
+    lineHeight: 18,
+    marginTop: 4,
+  },
+  recentChatMenuBtn: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Rename Conversation Modal
+  renameModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  renameModalCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  renameModalTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: Colors.foreground,
+    marginBottom: 14,
+  },
+  renameModalInput: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: Colors.foreground,
+    backgroundColor: Colors.background,
+    marginBottom: 18,
+  },
+  renameModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+  },
+  renameCancelBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+  },
+  renameCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.mutedForeground,
+  },
+  renameSaveBtn: {
+    backgroundColor: Colors.primary,
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+  },
+  renameSaveText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.primaryForeground,
+  },
 
   // ChatGPT Empty State
   chatGptEmptyState: {
+    width: '100%',
     alignItems: 'center',
     paddingTop: 36,
-    paddingHorizontal: 8,
+    paddingHorizontal: 0,
     marginBottom: 20,
   },
   chatGptLargeAvatar: {
@@ -1797,16 +1957,17 @@ const styles = StyleSheet.create({
   },
   chatGptPromptGrid: {
     width: '100%',
-    gap: 10,
+    gap: 12,
   },
   chatGptPromptCard: {
+    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 14,
     backgroundColor: Colors.card,
     paddingHorizontal: 16,
     paddingVertical: 14,
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: Colors.border,
     shadowColor: Colors.foreground,
@@ -1816,20 +1977,20 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   chatGptPromptIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: Colors.secondary,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#F3E4D9',
     alignItems: 'center',
     justifyContent: 'center',
   },
   chatGptPromptCardTitle: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
     color: Colors.foreground,
   },
   chatGptPromptCardSub: {
-    fontSize: 12,
+    fontSize: 12.5,
     color: Colors.mutedForeground,
     marginTop: 2,
   },
@@ -1851,6 +2012,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 6,
     elevation: 3,
+  },
+  chatGptUserAttachedImage: {
+    width: 220,
+    height: 180,
+    borderRadius: 14,
+    marginBottom: 8,
   },
   chatGptUserText: {
     fontSize: 15,
@@ -1897,6 +2064,92 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     letterSpacing: -0.2,
   },
+  chatGptH1: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: Colors.foreground,
+    marginTop: 16,
+    marginBottom: 6,
+    letterSpacing: -0.3,
+  },
+  chatGptH2: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.foreground,
+    marginTop: 14,
+    marginBottom: 6,
+    letterSpacing: -0.2,
+  },
+  chatGptH3: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.foreground,
+    marginTop: 12,
+    marginBottom: 4,
+    letterSpacing: -0.1,
+  },
+  chatGptBlockquote: {
+    borderLeftWidth: 3,
+    borderLeftColor: Colors.primary,
+    paddingLeft: 12,
+    marginVertical: 6,
+  },
+  chatGptBlockquoteText: {
+    fontSize: 14.5,
+    fontStyle: 'italic',
+    color: Colors.mutedForeground,
+    lineHeight: 22,
+  },
+  chatGptListBlock: {
+    marginVertical: 4,
+    gap: 6,
+  },
+  chatGptListItemRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    paddingLeft: 2,
+  },
+  chatGptBulletSymbol: {
+    fontSize: 16,
+    lineHeight: 22,
+    color: Colors.primary,
+    fontWeight: '700',
+  },
+  chatGptListNumSymbol: {
+    fontSize: 14.5,
+    lineHeight: 22,
+    color: Colors.primary,
+    fontWeight: '700',
+    minWidth: 18,
+  },
+  chatGptListItemText: {
+    flex: 1,
+    fontSize: 15,
+    color: Colors.foreground,
+    lineHeight: 22,
+  },
+  chatGptMessageActionBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 8,
+    paddingTop: 4,
+  },
+  chatGptActionIconBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+  },
+  chatGptActionCopiedText: {
+    fontSize: 10.5,
+    fontWeight: "700",
+    color: Colors.primary,
+    letterSpacing: 0.5,
+  },
   inlineTagBadge: {
     backgroundColor: Colors.secondary,
     color: Colors.foreground,
@@ -1927,19 +2180,19 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     borderColor: Colors.border,
-    padding: 12,
+    padding: 10,
     marginVertical: 4,
     gap: 12,
-    alignItems: 'flex-start',
+    alignItems: 'center',
     shadowColor: Colors.foreground,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
     elevation: 2,
   },
   gptCardImgWrap: {
-    width: 96,
-    height: 116,
+    width: 88,
+    height: 100,
     borderRadius: 10,
     backgroundColor: Colors.muted,
     overflow: 'hidden',
@@ -1972,22 +2225,27 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: Colors.foreground,
-    textDecorationLine: 'underline',
-    textDecorationColor: Colors.border,
     lineHeight: 20,
   },
+  gptCardMetaText: {
+    fontSize: 12.5,
+    fontWeight: '500',
+    color: Colors.mutedForeground,
+    marginTop: 4,
+  },
   gptBadgePill: {
-    backgroundColor: Colors.secondary,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
+    backgroundColor: "#F3E4D9",
+    paddingHorizontal: 9,
+    paddingVertical: 3.5,
+    borderRadius: 12,
     alignSelf: 'flex-start',
     marginVertical: 4,
   },
   gptBadgeText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: Colors.foreground,
+    fontSize: 10.5,
+    fontWeight: "700",
+    color: Colors.primary,
+    letterSpacing: 0.5,
   },
   gptCardDesc: {
     fontSize: 13,
@@ -2051,6 +2309,118 @@ const styles = StyleSheet.create({
     color: Colors.foreground,
   },
 
+  // ChatGPT-style outfit style rows
+  styleRow: {
+    flexDirection: 'row',
+    gap: 14,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    alignItems: 'flex-start',
+  },
+  styleRowImgWrap: {
+    width: 120,
+    height: 150,
+    borderRadius: 16,
+    backgroundColor: Colors.muted,
+    overflow: 'hidden',
+  },
+  styleRowContent: {
+    flex: 1,
+  },
+  styleRowTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: Colors.foreground,
+    lineHeight: 22,
+  },
+  styleRowDesc: {
+    fontSize: 14.5,
+    lineHeight: 21,
+    color: Colors.foreground,
+    marginTop: 4,
+  },
+  styleRowWhy: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: Colors.mutedForeground,
+    marginTop: 4,
+  },
+  styleRowBudget: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.foreground,
+    marginTop: 6,
+  },
+  styleRowLink: {
+    fontSize: 14,
+    color: Colors.foreground,
+    textDecorationLine: 'underline',
+    marginTop: 5,
+  },
+
+  // ChatGPT-style follow-up question card
+  followUpCard: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 20,
+    padding: 16,
+    marginTop: 6,
+  },
+  followUpGroup: {
+    paddingVertical: 4,
+  },
+  followUpGroupTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.foreground,
+    marginBottom: 8,
+  },
+  followUpOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 8,
+  },
+  followUpRadio: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    borderColor: Colors.mutedForeground,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  followUpRadioDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: Colors.foreground,
+  },
+  followUpOptionText: {
+    flex: 1,
+    fontSize: 14.5,
+    color: Colors.foreground,
+  },
+  followUpDivider: {
+    height: 1,
+    backgroundColor: Colors.border,
+    marginVertical: 10,
+  },
+  followUpContinue: {
+    alignSelf: 'flex-end',
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 20,
+    paddingVertical: 9,
+    borderRadius: 20,
+    marginTop: 12,
+  },
+  followUpContinueText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.primaryForeground,
+  },
+
   // Vertical Outfits Wrap
   outfitsVerticalWrap: {
     gap: 12,
@@ -2058,25 +2428,16 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   outfitBlock: {
-    backgroundColor: Colors.card,
-    borderRadius: 16,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    shadowColor: Colors.foreground,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+    marginVertical: 4,
+    paddingVertical: 2,
   },
   outfitHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    marginBottom: 8,
+    paddingHorizontal: 2,
+    marginBottom: 6,
+    marginTop: 4,
   },
   outfitSectionTitle: {
     fontSize: 16,
@@ -2425,7 +2786,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.45)',
   },
   drawerContent: {
-    width: DRAWER_WIDTH,
+    width: 300,
     height: '100%',
     backgroundColor: Colors.background,
     borderRightWidth: 1,
@@ -2632,154 +2993,29 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#FFFFFF',
   },
-
-  // Style DNA & Persistent Memory Profile UI
-  headerDnaBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#F3E4D9',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  styleDnaDrawerBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    marginBottom: 12,
-    backgroundColor: '#F7EFE7',
-    borderWidth: 1,
-    borderColor: '#E8DED1',
-    borderRadius: Radii.full,
-    paddingVertical: 10,
-  },
-  styleDnaDrawerBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#BA7B5E',
-  },
-  styleDnaOverlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
-  },
-  styleDnaBackdrop: {
-    flex: 1,
-  },
-  styleDnaSheet: {
-    backgroundColor: '#F7EFE7',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingTop: 18,
-    paddingBottom: 28,
-    paddingHorizontal: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -3 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  styleDnaHeader: {
+  editingBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingBottom: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  styleDnaIconWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#F3E4D9',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  styleDnaTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: Colors.foreground,
-  },
-  styleDnaSubtitle: {
-    fontSize: 11,
-    color: Colors.mutedForeground,
-    marginTop: 1,
-  },
-  dnaSection: {
-    marginTop: 14,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  dnaSectionTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    marginHorizontal: 16,
     marginBottom: 6,
-  },
-  dnaSectionTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: Colors.foreground,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  tagWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 4,
-  },
-  dnaTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F7EDE8',
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E8DED1',
-    borderRadius: Radii.full,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    borderColor: '#ECD4C9',
   },
-  dnaTagText: {
-    fontSize: 12,
-    color: Colors.foreground,
-    textTransform: 'capitalize',
-  },
-  dnaEmptyText: {
-    fontSize: 12,
-    color: Colors.mutedForeground,
-    fontStyle: 'italic',
-    marginTop: 2,
-  },
-  dnaNoticeBox: {
+  editingBannerLeft: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    marginTop: 14,
-    padding: 10,
-    backgroundColor: '#F3E4D9',
-    borderRadius: Radii.md,
-  },
-  dnaNoticeText: {
-    flex: 1,
-    fontSize: 11,
-    color: '#7C4A31',
-    lineHeight: 15,
-  },
-  dnaDoneBtn: {
-    backgroundColor: '#BA7B5E',
-    borderRadius: Radii.full,
-    paddingVertical: 12,
     alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 14,
+    gap: 6,
+    flex: 1,
   },
-  dnaDoneBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
+  editingBannerText: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#a86248',
   },
 });
 

@@ -348,6 +348,14 @@ class AVAToolSuite:
                 filtered = list(candidates[:limit])
 
         if not filtered:
+            filtered = self._style_fallback_products(
+                query=query or search_query,
+                occasion=occasion,
+                platform=platform,
+                budget=budget or max_price,
+            )
+
+        if not filtered:
             filtered = self._generate_curated_fallback_products(
                 query=query or search_query,
                 occasion=occasion,
@@ -361,11 +369,13 @@ class AVAToolSuite:
             raw_u = p.get("canonical_product_url") or p.get("url") or p.get("product_url") or p.get("link")
             clean_u = extract_merchant_destination_url(raw_u) or raw_u
 
-            # Auto-heal dummy/placeholder links (e.g. /product/linen-shirt-01) or bare homepages
+            # Auto-heal dummy/placeholder links (e.g. /product/linen-shirt-01), bare homepages, or Google search links
             p_title = p.get("title") or query or "fashion garment"
             p_retailer = p.get("seller") or platform or "Myntra"
             if clean_u:
+                is_google = bool("google.com" in clean_u.lower() or "google.co.in" in clean_u.lower())
                 is_broken_dummy = bool(
+                    is_google or
                     re.search(r'/product/[^/]+-\d{2}$', clean_u) or
                     clean_u.rstrip('/') in ("https://www.myntra.com", "https://www.ajio.com", "https://www.amazon.in")
                 )
@@ -388,7 +398,13 @@ class AVAToolSuite:
     @staticmethod
     def make_merchant_search_url(platform: Optional[str], query: str) -> str:
         """Constructs a 100% valid, tested retailer search URL that never returns 404 error codes."""
-        encoded_q = urllib.parse.quote_plus(query.strip())
+        # Sanitize query by removing noise: parentheses counts like (42), "by Myntra", "online in india", etc.
+        clean_q = re.sub(r'[\(\[\{].*?[\)\]\}]', ' ', query or '')
+        clean_q = re.sub(r'(?i)\b(by\s+(myntra|ajio|amazon|flipkart|meesho|zara|h&m)|online\s+in\s+india|at\s+best\s+price|best\s+price|buy\s+now|mrp)\b', ' ', clean_q)
+        clean_q = re.sub(r'\s+', ' ', clean_q).strip()
+        if not clean_q:
+            clean_q = (query or "fashion").strip()
+        encoded_q = urllib.parse.quote_plus(clean_q)
         plat = (platform or "myntra").lower()
         if "ajio" in plat:
             return f"https://www.ajio.com/search/?text={encoded_q}"
@@ -582,6 +598,91 @@ class AVAToolSuite:
                 },
             ]
 
+    @staticmethod
+    def _style_fallback_products(
+        query: Optional[str] = None,
+        occasion: Optional[str] = None,
+        platform: Optional[str] = None,
+        budget: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Category-aware curated catalog used when no live search is available.
+        Each slot picks the entry whose keywords best match the style query, so
+        a lehenga style shows ethnic wear and a streetwear style shows tees and sneakers.
+        """
+        U = "https://images.unsplash.com/photo-{}?auto=format&fit=crop&w=800&q=80"
+        q = f"{query or ''} {occasion or ''}".lower()
+        plat_title = (platform or "Myntra").capitalize()
+        cap = float(budget) if budget else 4999.0
+
+        ethnic_kw = ["lehenga", "anarkali", "kurta", "kurti", "saree", "sari", "sherwani", "ethnic", "wedding", "festive", "mehendi", "sangeet", "haldi", "traditional"]
+        is_ethnic = any(k in q for k in ethnic_kw)
+
+        def entry(keys, title, slot, photo, base, ratio):
+            return {"keys": keys, "title": title, "slot": slot, "photo": photo, "price": min(base, cap * ratio)}
+
+        if is_ethnic:
+            core = [
+                entry(["lehenga", "choli"], "Embroidered Lehenga Choli Set", "Core Garment", "1610030469983-98e550d6193c", 2999.0, 0.5),
+                entry(["anarkali"], "Kashmiri Embroidered Anarkali Kurta Set", "Core Garment", "1609357605129-26f69abb5dfd", 2499.0, 0.45),
+                entry(["saree", "sari"], "Silk Blend Zari Border Saree", "Core Garment", "1617627143750-d86bc21e42bb", 2799.0, 0.5),
+                entry(["kurta", "kurti", "sherwani", "festive"], "Festive Straight Kurta Set", "Core Garment", "1602810318383-e386cc2a3ccf", 1799.0, 0.4),
+            ]
+            bottom = [entry([], "Churidar Palazzo Bottom", "Bottomwear", "1473966968600-fa801b869a1a", 899.0, 0.15)]
+            foot = [entry([], "Embroidered Ethnic Juttis", "Footwear", "1543163521-1bf539c55dd2", 899.0, 0.15)]
+            acc = [
+                entry(["dupatta"], "Silk Blend Zari Border Dupatta", "Bag & Accessories", "1583391733956-3750e0ff4e8b", 799.0, 0.12),
+                entry([], "Kundan Chandelier Earrings", "Jewelry", "1535632066927-ab7c9ab60908", 499.0, 0.1),
+            ]
+        else:
+            core = [
+                entry(["classic", "tailored", "navy", "formal", "office", "chic", "blazer"], "Tailored Structured Notch-Lapel Blazer", "Core Garment", "1548883354-7622d03aca27", 1899.0, 0.5),
+                entry(["relaxed", "casual", "smart", "beige", "linen", "oversized", "blazer"], "Relaxed Minimalist Oversized Blazer", "Core Garment", "1539109136881-3be0616acf4b", 1999.0, 0.5),
+                entry(["modern", "power", "suit", "executive", "black", "formal", "blazer"], "Modern Executive Single-Breasted Blazer", "Core Garment", "1507679799987-c73779587ccf", 2199.0, 0.5),
+                entry(["t-shirt", "tshirt", "tee", "oversized", "streetwear", "graphic", "casual"], "Oversized Cotton Graphic T-Shirt", "Core Garment", "1521572267360-ee0c2909d518", 799.0, 0.3),
+                entry(["shirt", "linen", "smart", "classy", "striped", "white", "casual"], "Relaxed Fit Crisp Linen Shirt", "Core Garment", "1602810318383-e386cc2a3ccf", 1199.0, 0.35),
+            ]
+            bottom = [
+                entry(["cargo", "jeans", "denim", "relaxed", "baggy", "streetwear"], "Straight Fit High-Rise Cargo Jeans", "Bottomwear", "1541099649105-f69ad21f3246", 999.0, 0.3),
+                entry(["trouser", "formal", "pleated", "office", "chic"], "High-Waist Pleated Formal Trousers", "Bottomwear", "1506629082955-511b1aa562c8", 999.0, 0.3),
+                entry(["chino", "smart", "classy", "casual", "pants"], "Slim Tapered Chino Trousers", "Bottomwear", "1473966968600-fa801b869a1a", 899.0, 0.3),
+            ]
+            foot = [
+                entry(["platform", "chunky", "streetwear", "sneaker"], "Chunky White Platform Sneakers", "Footwear", "1595950653106-6c9ebd614d3a", 699.0, 0.2),
+                entry(["loafer", "formal", "office", "classic", "chic"], "Classic Pointed-Toe Loafers", "Footwear", "1533867617858-e7b97e060509", 799.0, 0.2),
+                entry(["sneaker", "smart", "classy", "casual", "minimal"], "Minimalist Low-Top Leather Sneakers", "Footwear", "1549298916-b41d501d3772", 699.0, 0.2),
+            ]
+            acc = []
+
+        # Deterministic rotation so different style queries lead with different pieces
+        rot = sum(ord(c) for c in q) % 3
+
+        def pick(options):
+            scored = [(sum(1 for k in o["keys"] if k in q), i, o) for i, o in enumerate(options)]
+            best = max(s for s, _, _ in scored)
+            if best > 0:
+                return next(o for s, _, o in scored if s == best)
+            return options[rot % len(options)]
+
+        chosen = [pick(core), pick(bottom), pick(foot)] + ([pick(acc)] if acc else [])
+        products = []
+        for o in chosen:
+            link = AVAToolSuite.make_merchant_search_url(plat_title, o["title"])
+            products.append({
+                "title": o["title"],
+                "price": round(o["price"]),
+                "seller": plat_title,
+                "url": link,
+                "product_url": link,
+                "canonical_product_url": link,
+                "affiliate_url": link,
+                "image": U.format(o["photo"]),
+                "slot": o["slot"],
+                "is_shoppable": True,
+                "source_type": "curated_fallback",
+            })
+        return products
+
     async def build_outfit(
         self,
         occasion: str,
@@ -589,6 +690,10 @@ class AVAToolSuite:
         budget: Optional[float] = None,
         platform: Optional[str] = None,
         style: Optional[str] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        why: Optional[str] = None,
+        tag: Optional[str] = None,
     ) -> Dict[str, Any]:
         top_item = None
         bottom_item = None
@@ -640,9 +745,9 @@ class AVAToolSuite:
         total_price = sum(float(i.get("price") or 0.0) for i in items)
 
         occ_name = occasion.capitalize() if occasion else "Fashion"
-        return {
+        result = {
             "id": f"outfit_{uuid.uuid4().hex[:6]}",
-            "name": f"{occ_name} Look",
+            "name": name or f"{occ_name} Look",
             "occasion": occasion,
             "style": style or "casual",
             "items": items,
@@ -650,6 +755,13 @@ class AVAToolSuite:
             "reason": f"Perfectly curated {style or 'stylish'} outfit suited for {occasion or 'everyday wear'}.",
             "actions": ["TRY_ON", "SHOP", "SAVE", "MAKE_CHEAPER", "SWAP"],
         }
+        if description:
+            result["description"] = description
+            result["why"] = why
+            result["tag"] = tag
+            result["budget_min"] = round(total_price * 0.8)
+            result["budget_max"] = round(total_price)
+        return result
 
     async def compare_prices(
         self,

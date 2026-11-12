@@ -68,6 +68,7 @@ export interface LocalAVAConversation {
   updated_at: number;
   _sync_status: SyncStatus;
   _local_updated_at: number;
+  last_message?: string;
 }
 
 export interface LocalAVAMessage {

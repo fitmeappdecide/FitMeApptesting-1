@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput,
-  KeyboardAvoidingView, Platform, ScrollView,
+  KeyboardAvoidingView, Platform, ScrollView, Linking,
 } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
 import { useRouter, Link } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logo } from '../src/components/Logo';
@@ -83,6 +84,37 @@ export default function Signup() {
             <TouchableOpacity style={[styles.primaryBtn, loading && { opacity: 0.6 }]} onPress={handleCreateAccount} disabled={loading}>
               <Text style={styles.primaryBtnText}>{loading ? 'Creating account…' : 'Create account'}</Text>
             </TouchableOpacity>
+
+            <View style={styles.legalBlock}>
+              <Text style={styles.legalText}>By creating an account, you agree to our</Text>
+              <View style={styles.legalLinksRow}>
+                <TouchableOpacity
+                  onPress={() => {
+                    WebBrowser.openBrowserAsync('https://fitmefashion.com/terms-and-conditions', {
+                      presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+                    }).catch(() => {
+                      Linking.openURL('https://fitmefashion.com/terms-and-conditions');
+                    });
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.legalLink}>Terms of Service</Text>
+                </TouchableOpacity>
+                <Text style={styles.legalText}> and </Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    WebBrowser.openBrowserAsync('https://fitmefashion.com/privacy-policy', {
+                      presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+                    }).catch(() => {
+                      Linking.openURL('https://fitmefashion.com/privacy-policy');
+                    });
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.legalLink}>Privacy Policy</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           </View>
 
           <View style={styles.footer}>
@@ -128,4 +160,8 @@ const styles = StyleSheet.create({
   footer: { flexDirection: 'row', justifyContent: 'center', marginTop: Spacing.xxxl },
   footerText: { fontSize: 14, color: Colors.mutedForeground },
   footerLink: { fontSize: 14, color: Colors.accent, fontWeight: '500' },
+  legalBlock: { alignItems: 'center', marginTop: Spacing.xl },
+  legalText: { fontSize: 12, color: Colors.mutedForeground, textAlign: 'center' },
+  legalLinksRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 3 },
+  legalLink: { fontSize: 12, color: Colors.accent, textDecorationLine: 'underline', fontWeight: '500' },
 });

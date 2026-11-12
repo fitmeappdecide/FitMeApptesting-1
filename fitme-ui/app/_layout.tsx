@@ -1,10 +1,19 @@
 import React, { useEffect } from 'react';
+import { LogBox } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
 import { Colors } from '../src/constants/theme';
 import { requestNotificationPermissions } from '../src/services/notificationService';
+
+// Suppress background sync notifications from showing yellow dev LogBox overlays
+LogBox.ignoreLogs([
+  '[AVAStore]',
+  'Network request timed out',
+  '[AVA SHOP]',
+  'Unable to open URL',
+]);
 
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({
@@ -45,6 +54,8 @@ export default function RootLayout() {
         <Stack.Screen name="history" />
         <Stack.Screen name="notifications" />
         <Stack.Screen name="privacy-security" />
+        <Stack.Screen name="privacy-policy" />
+        <Stack.Screen name="terms-of-service" />
         <Stack.Screen name="contact-support" />
         <Stack.Screen name="open-source-licenses" />
         <Stack.Screen name="about" />

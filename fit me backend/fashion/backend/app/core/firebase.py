@@ -50,9 +50,13 @@ def verify_token(token: str) -> dict:
         decoded_token = auth.verify_id_token(token)
         return decoded_token
     except Exception as e:
-        logger.warning(f"Firebase Admin verify_id_token failed ({e}). Trying Google OAuth JWT payload decode.")
+        if settings.is_production:
+            logger.error(f"Firebase Admin verify_id_token failed in production: {e}")
+            raise ValueError(f"Invalid Firebase/Google ID token: {e}")
+
+        logger.warning(f"Firebase Admin verify_id_token failed ({e}). Trying dev Google OAuth JWT payload decode.")
         try:
-            # Fallback for Google OAuth ID Tokens or development tokens
+            # Development-only fallback for Google OAuth ID Tokens or local testing tokens
             unverified = jwt.decode(token, options={"verify_signature": False})
             if "email" in unverified or "sub" in unverified:
                 email = unverified.get("email") or f"user_{unverified.get('sub', 'dev')[:8]}@example.com"

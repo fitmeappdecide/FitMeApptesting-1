@@ -7,10 +7,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { AppHeader } from '../src/components/AppHeader';
+import { Logo } from '../src/components/Logo';
 import { Colors, Spacing, Radii } from '../src/constants/theme';
 
-const WEBSITE = 'https://fitme.app';
+const WEBSITE = 'https://fitmefashion.com';
 const INSTAGRAM = 'https://instagram.com/fitme';
+const SHOW_LICENSES = false;
+const SHOW_INSTAGRAM = false;
 
 export default function About() {
   const router = useRouter();
@@ -32,48 +35,52 @@ export default function About() {
         <View style={styles.identity}>
           <View style={styles.logoWrap}>
             <Image
-              source={require('../assets/eva.png')}
+              source={require('../assets/app-icon.png')}
               style={styles.logo}
-              resizeMode="contain"
+              resizeMode="cover"
             />
           </View>
-          <Text style={styles.appName}>FitMe</Text>
+          <Logo size={32} />
         </View>
 
         {/* Application Info */}
         <View style={styles.card}>
           <TouchableOpacity
-            style={styles.rowBorder}
+            style={(SHOW_LICENSES || SHOW_INSTAGRAM) ? styles.rowBorder : styles.row}
             onPress={() => openLink(WEBSITE)}
             activeOpacity={0.7}
           >
             <Text style={styles.rowLabel}>Official Website</Text>
             <View style={styles.rowRight}>
-              <Text style={styles.rowValueLink}>fitme.app</Text>
+              <Text style={styles.rowValueLink}>fitmefashion.com</Text>
               <Ionicons name="open-outline" size={15} color={Colors.mutedForeground} />
             </View>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.rowBorder}
-            onPress={() => router.push('/open-source-licenses' as any)}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.rowLabel}>Open Source Licenses</Text>
-            <Ionicons name="chevron-forward" size={16} color={Colors.mutedForeground} />
-          </TouchableOpacity>
+          {SHOW_LICENSES && (
+            <TouchableOpacity
+              style={SHOW_INSTAGRAM ? styles.rowBorder : styles.row}
+              onPress={() => router.push('/open-source-licenses' as any)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.rowLabel}>Open Source Licenses</Text>
+              <Ionicons name="chevron-forward" size={16} color={Colors.mutedForeground} />
+            </TouchableOpacity>
+          )}
 
-          <TouchableOpacity
-            style={styles.row}
-            onPress={() => openLink(INSTAGRAM)}
-            activeOpacity={0.7}
-          >
-            <View style={styles.socialRow}>
-              <Ionicons name="logo-instagram" size={18} color={Colors.foreground} />
-              <Text style={styles.rowLabel}>Instagram</Text>
-            </View>
-            <Ionicons name="open-outline" size={15} color={Colors.mutedForeground} />
-          </TouchableOpacity>
+          {SHOW_INSTAGRAM && (
+            <TouchableOpacity
+              style={styles.row}
+              onPress={() => openLink(INSTAGRAM)}
+              activeOpacity={0.7}
+            >
+              <View style={styles.socialRow}>
+                <Ionicons name="logo-instagram" size={18} color={Colors.foreground} />
+                <Text style={styles.rowLabel}>Instagram</Text>
+              </View>
+              <Ionicons name="open-outline" size={15} color={Colors.mutedForeground} />
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Copyright */}
@@ -93,14 +100,15 @@ const styles = StyleSheet.create({
 
   identity: { alignItems: 'center', marginBottom: Spacing.xxl },
   logoWrap: {
-    width: 80, height: 80, borderRadius: 24,
+    width: 80, height: 80, borderRadius: 22,
     backgroundColor: Colors.card, alignItems: 'center', justifyContent: 'center',
-    marginBottom: Spacing.lg, borderWidth: 1, borderColor: Colors.border,
+    marginBottom: Spacing.md,
+    borderWidth: 1, borderColor: Colors.border,
     shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05, shadowRadius: 8, elevation: 2,
+    shadowOpacity: 0.08, shadowRadius: 10, elevation: 3,
+    overflow: 'hidden',
   },
-  logo: { width: 44, height: 44, tintColor: Colors.foreground },
-  appName: { fontFamily: 'serif', fontSize: 28, color: Colors.foreground },
+  logo: { width: 80, height: 80, borderRadius: 22 },
 
   card: {
     backgroundColor: Colors.card, borderRadius: Radii.xl,

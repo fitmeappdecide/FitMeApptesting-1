@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Account Deletion Instructions — FitMe</title>
+  <meta name="description" content="How to delete your FitMe account, uploaded photos, and personal data.">
+  <link rel="canonical" href="https://fitmefashion.com/account-deletion">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #FAF7F2;
+      --card-bg: #FFFFFF;
+      --text-main: #1C1917;
+      --text-muted: #6B7280;
+      --accent: #A96A47;
+      --accent-light: rgba(169, 106, 71, 0.08);
+      --destructive: #DC2626;
+      --border: #E8E2D9;
+      --radius: 16px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text-main);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      line-height: 1.65;
+      padding: 0 0 80px;
+    }
+    .site-header {
+      position: sticky;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      background: rgba(250, 247, 242, 0.92);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .site-header-inner {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .brand-logo {
+      display: inline-flex;
+      align-items: center;
+      font-family: 'Cormorant Garamond', ui-serif, Georgia, serif;
+      font-size: 1.85rem;
+      font-weight: 300;
+      letter-spacing: -0.025em;
+      line-height: 1;
+      text-decoration: none;
+      user-select: none;
+      transition: opacity 0.15s ease;
+    }
+    .brand-logo:hover {
+      opacity: 0.85;
+    }
+    .brand-logo .logo-fit {
+      color: #1D1D1F;
+    }
+    .brand-logo .logo-me {
+      color: #A96A47;
+    }
+    .back-home-link {
+      font-size: 0.88rem;
+      color: #A96A47;
+      text-decoration: none;
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: opacity 0.15s ease;
+    }
+    .back-home-link:hover {
+      text-decoration: underline;
+      opacity: 0.85;
+    }
+    .container {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 36px 20px 0;
+    }
+    .page-intro {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+    .badge {
+      display: inline-block;
+      background: var(--accent-light);
+      color: var(--accent);
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 14px;
+      border: 1px solid rgba(169, 106, 71, 0.2);
+    }
+    .page-title {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 2.2rem;
+      font-weight: 600;
+      color: var(--text-main);
+      letter-spacing: -0.01em;
+      margin-bottom: 12px;
+    }
+    .nav-links {
+      font-size: 0.92rem;
+    }
+    .nav-links a {
+      color: var(--accent);
+      text-decoration: none;
+      margin: 0 10px;
+      font-weight: 500;
+    }
+    .nav-links a:hover { text-decoration: underline; }
+    
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px;
+      margin-bottom: 24px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+    }
+    .card h2 {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 1.55rem;
+      font-weight: 600;
+      color: var(--text-main);
+      margin-bottom: 14px;
+    }
+    .card p {
+      color: #374151;
+      font-size: 0.98rem;
+      margin-bottom: 14px;
+    }
+    .card ol, .card ul {
+      padding-left: 24px;
+      margin-bottom: 14px;
+      color: #374151;
+      font-size: 0.97rem;
+    }
+    .card li { margin-bottom: 10px; }
+    .card li strong { color: var(--text-main); }
+    
+    .warning-box {
+      background: #FEF2F2;
+      border: 1px solid #FCA5A5;
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin-bottom: 24px;
+      color: #991B1B;
+      font-size: 0.96rem;
+    }
+    .contact-box {
+      background: #F4EFE6;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      text-align: center;
+      margin-top: 40px;
+    }
+    .contact-box h3 {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 1.45rem;
+      margin-bottom: 8px;
+    }
+    .contact-email {
+      display: inline-block;
+      margin-top: 10px;
+      font-size: 1.02rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-decoration: none;
+      background: #FFFFFF;
+      padding: 10px 22px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      transition: all 0.2s;
+    }
+    .contact-email:hover {
+      background: var(--accent);
+      color: #FFFFFF;
+    }
+    footer {
+      text-align: center;
+      font-size: 0.88rem;
+      color: var(--text-muted);
+      margin-top: 50px;
+      padding-top: 30px;
+      border-top: 1px solid var(--border);
+    }
+    .footer-logo {
+      font-size: 1.5rem;
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="site-header-inner">
+      <a href="https://fitmefashion.com" class="brand-logo" aria-label="FitMe Home">
+        <span class="logo-fit">Fit</span><span class="logo-me">Me</span>
+      </a>
+      <a href="https://fitmefashion.com" class="back-home-link">fitmefashion.com &rarr;</a>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="page-intro">
+      <div class="badge">Account & Data Management</div>
+      <h1 class="page-title">Account Deletion Instructions</h1>
+      <div class="nav-links">
+        <a href="/privacy-policy">Privacy Policy</a> &bull;
+        <a href="/terms-and-conditions">Terms of Service</a> &bull;
+        <a href="mailto:fitme.appsupport@gmail.com">Contact Support</a>
+      </div>
+    </div>
+
+    <div class="warning-box">
+      <strong>Important Notice:</strong> Deleting your account is permanent and irreversible. All personal information, uploaded model photographs, virtual try-ons, and saved looks will be immediately purged.
+    </div>
+
+    <div class="card">
+      <h2>Method 1: Delete Directly Inside the FitMe App (Instant)</h2>
+      <p>The fastest and easiest way to permanently delete your account is through the mobile application:</p>
+      <ol>
+        <li>Open the <strong>FitMe</strong> app on your iOS or Android device.</li>
+        <li>Tap the <strong>Profile</strong> tab in the bottom navigation bar.</li>
+        <li>Scroll down to the <strong>Danger Zone</strong> section at the bottom of the screen.</li>
+        <li>Tap <strong>Delete Account</strong>.</li>
+        <li>Confirm your choice on the confirmation prompt. Your account, authentication credentials, and all uploaded photos will be permanently deleted immediately.</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h2>Method 2: Request Deletion via Email (Web Request)</h2>
+      <p>If you have uninstalled the app or cannot access your mobile device, you can request account deletion by email:</p>
+      <ol>
+        <li>Send an email to: <a href="mailto:fitme.appsupport@gmail.com" style="color:var(--accent); font-weight:600;">fitme.appsupport@gmail.com</a></li>
+        <li>Use the subject line: <strong>Account Deletion Request</strong></li>
+        <li>Provide the email address associated with your FitMe account.</li>
+        <li>Our support team will verify your identity and permanently delete your account and all associated data within 48 business hours.</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h2>What Data is Deleted?</h2>
+      <ul>
+        <li><strong>Authentication Records:</strong> Firebase and Apple/Google sign-in links are removed.</li>
+        <li><strong>Uploaded Photographs:</strong> All model photos and garment photos in cloud storage are irreversibly deleted.</li>
+        <li><strong>Generated Looks:</strong> All virtual try-on images and history are permanently cleared.</li>
+        <li><strong>User Profile:</strong> Your name, email, style DNA, and custom preferences are wiped.</li>
+      </ul>
+    </div>
+
+    <div class="contact-box">
+      <h3>Questions or Assistance?</h3>
+      <p>Contact our support team anytime:</p>
+      <a href="mailto:fitme.appsupport@gmail.com" class="contact-email">fitme.appsupport@gmail.com</a>
+    </div>
+
+    <footer>
+      <a href="https://fitmefashion.com" class="brand-logo footer-logo" aria-label="FitMe Home">
+        <span class="logo-fit">Fit</span><span class="logo-me">Me</span>
+      </a>
+      <p style="margin-top: 10px;">&copy; 2026 FitMe. All rights reserved.</p>
+      <p style="margin-top: 4px; font-size: 0.85rem;"><a href="mailto:fitme.appsupport@gmail.com" style="color: var(--accent);">fitme.appsupport@gmail.com</a></p>
+    </footer>
+  </div>
+</body>
+</html>

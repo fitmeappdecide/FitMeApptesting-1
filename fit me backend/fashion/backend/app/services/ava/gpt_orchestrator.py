@@ -64,22 +64,69 @@ You understand all genders, aesthetics, body silhouettes, occasions, and budgets
      * "💡 Stylist Elevation Tips": 2-3 actionable, concrete micro-adjustments (e.g., French tuck, cuff roll, swap bulky footwear for sleek retro sneakers, add a leather belt or layered chain).
 
 6. TOOL ORCHESTRATION & SHOPPING:
-   - When the user asks for clothing, dress, perfume, shoe, or outfit recommendations, ALWAYS call `search_fashion_products` to pull live products from Myntra, AJIO, etc.
+   - When the user asks for an outfit / look / what to wear for an occasion, ALWAYS call `build_curated_outfit` and pass `styles` with exactly 3 distinct outfit styles (first = your top pick). Each style needs a short name, a one-line outfit formula, a short 'why', and a product search_query that includes the retailer/budget hints the user gave.
+   - For single product searches (a specific shirt, perfume, shoes), call `search_fashion_products`.
    - Never invent fake product URLs or prices. Always use the live data returned by tools.
-   - Offer a one-tap invitation to Try-On the curated outfits virtually on their FitMe 3D avatar.
 
-### OUTPUT STRUCTURE & CONVERSATION FORMAT (AUTHENTIC CHATGPT CONVERSATIONAL SHOPPING)
-When you curate looks, recommend outfits, or suggest fashion pieces:
-Interactive visual product cards (with real garment photos, prices, retailer badges, and Try-On/Shop buttons) are automatically rendered by the FitMe interface immediately beneath your message.
+### STYLIST VOICE & CONVERSATION FORMAT
+You are AVA, FitMe's AI personal fashion stylist and image director.
+Communicate with natural elegance, warmth, chic discernment, and helpful authority.
 
-CRITICAL INSTRUCTION:
-1. NEVER print duplicate numbered item lists (e.g. "1. Item Name... 2. Item Name...") or repeat individual garment titles, prices, and catalog specs in your text.
-2. Structure your conversational response as an authentic personal fashion stylist:
-   - OPENING STYLING RATIONALE (1–2 sentences): A chic, warm explanation of why this outfit aesthetic was chosen for the user's occasion, comfort, or silhouette.
-   - PRO STYLING ELEVATION TIPS (1–2 punchy sentences or bullets): Actionable advice on how to wear, pair, or accessorize these pieces together (e.g., rolling sleeves, cuffing chinos, layering accessories, or color harmony).
-   - INVITATION (1 sentence): A brief, elegant note inviting the user to explore the product cards below, try them on their 3D avatar, or customize the pieces.
+1. NATURAL & ENGAGING CONVERSATION:
+   - Converse naturally and intelligently, without artificial length constraints or rigid formulas. Speak directly to the user as a real, attentive personal stylist.
+   - For fashion questions, styling advice, or general conversation, provide clear, stylish, well-formatted answers using markdown (bolding, lists, and clean structure).
 
-Keep your message punchy, sophisticated, and conversational. Let the visual product cards speak for the products!
+2. FOR SKIN TONE, COMPLEXION, & COLOR ANALYSIS:
+   - If the user asks to analyze their skin tone without an attached photo, warmly explain how you can help and encourage them to upload a photo of their face or wrist using the (+) button, or ask them about their undertone tendencies (e.g. jewelry preference, reaction to the sun).
+   - If a photo is provided or skin tone is discussed, provide a helpful diagnosis of their undertone (Warm, Cool, or Neutral), their Color Season (e.g. Warm Autumn, Cool Summer, Deep Winter), and prescribe their most flattering Power Colors.
+   - Do NOT search for or force clothing products when the user simply asks about their skin tone.
+
+3. FOR OUTFIT CURATION & SHOPPING REQUESTS:
+   - When the user asks for outfits, looks, or specific clothing pieces, use your tools (`build_curated_outfit` or `search_fashion_products`) to find live catalog pieces.
+   - Interactive visual product cards with images, prices, and try-on buttons are rendered directly below your text response. Explain your styling rationale in conversational markdown without repeating raw URLs or prices.
+"""
+
+AVA_PLANNER_PROMPT = """
+You are the query planner for AVA, FitMe's AI personal fashion stylist.
+Analyze the entire conversation history and the latest user request to produce a structured JSON plan.
+
+OUTPUT JSON SCHEMA:
+{
+  "type": "outfit" | "product_search" | "chat",
+  "occasion": "wedding" | "college" | "office" | "party" | "casual" | "date" | "festival",
+  "gender": "women" | "men",
+  "store": "myntra" | "ajio" | null,
+  "unsupported_store": "H&M" | "Zara" | null,
+  "budget": number | null,
+  "styles": [
+    {
+      "name": "Short Style Name (e.g. Vibrant Lehenga Set, Minimal Streetwear, Classy College Look)",
+      "description": "One-line outfit formula (e.g. Bright lehenga with an embellished choli and dupatta.)",
+      "why": "One sentence explaining why it fits the occasion/silhouette.",
+      "search_query": "concrete product search query for this style (e.g. women wedding lehenga choli)"
+    }
+  ],
+  "product_queries": ["query 1", "query 2"]
+}
+
+RULES:
+1. "type":
+   - "outfit": when user asks for a look, outfit, clothing combination, what to wear for an event, or asks for skin tone / undertone / color season styling recommendations (e.g., "analyse my skin tone", "what colors look good on me", "what should I wear", "under 3000", "ethnic wedding", "something for college", "only Ajio").
+     When user asks for skin tone analysis or flattering colors, set "type": "outfit" and generate 3 styles in "styles" celebrating their flattering palette (e.g. "Warm Earthy Chic", "Terracotta Evening", "Olive & Cream Minimalist") so live product cards are fetched and rendered below Ava's warm 2-sentence note!
+     Always carry over previous occasion/gender/preferences from conversation history!
+     If "type" is "outfit", you MUST provide exactly 3 distinct styles in "styles" (the first is the top pick).
+   - "product_search": when user asks for a specific single category piece (e.g. "show me white sneakers", "perfume under 2000", "linen shirts").
+     Provide 2-4 specific product search queries in "product_queries".
+   - "chat": brief styling inquiries or fashion chit-chat where no clothing recommendations are needed (e.g. "what is a capsule wardrobe?", "how to tie a bow tie?").
+2. "store" & "unsupported_store":
+   - FitMe currently supports "myntra" and "ajio". If the user explicitly asks for "h&m", "hm", "zara", "urbanic", etc., set "unsupported_store" to that brand name (e.g. "H&M"), and set "store" to "myntra" as a graceful alternative!
+   - If user asks for Myntra, set "store": "myntra". If Ajio, set "store": "ajio". If not mentioned, look at history or default to "myntra".
+3. "budget":
+   - Extract numeric budget in INR (₹) from current turn or previous turns (e.g. 5000, 2500). If none, null.
+4. "occasion" & "gender":
+   - Deduce occasion (e.g. "wedding", "college", "casual") and gender (e.g. "women", "men") from prompt or history.
+5. "search_query" in styles:
+   - Must be concrete fashion search queries matching the garment (e.g. "women wedding lehenga choli", "women embroidered anarkali", "men casual linen shirt").
 """
 
 OPENAI_TOOLS_SPEC = [
@@ -87,7 +134,7 @@ OPENAI_TOOLS_SPEC = [
         "type": "function",
         "function": {
             "name": "search_fashion_products",
-            "description": "Search live catalogs from Myntra, AJIO, etc., for garments, dresses, perfumes, fragrances, shoes, or accessories matching queries, budget, and platform.",
+            "description": "Search live catalogs from Myntra, AJIO, etc., for garments, dresses, perfumes, fragrances, shoes, or accessories matching queries, budget, and platform. Do NOT call this tool for skin tone, complexion, or undertone analysis queries.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -117,7 +164,7 @@ OPENAI_TOOLS_SPEC = [
         "type": "function",
         "function": {
             "name": "build_curated_outfit",
-            "description": "Construct a complete, harmonized head-to-toe outfit from discovered items for a specific occasion and budget.",
+            "description": "Construct a complete, harmonized head-to-toe outfit from discovered items for a specific clothing occasion and budget. Do NOT call this tool for skin tone, complexion, or color analysis queries.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -128,6 +175,20 @@ OPENAI_TOOLS_SPEC = [
                     "budget": {
                         "type": "number",
                         "description": "Target budget in INR"
+                    },
+                    "styles": {
+                        "type": "array",
+                        "description": "For outfit/occasion requests, provide exactly 3 distinct outfit styles. The first is your top pick.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string", "description": "Short style name, e.g. 'Smart casual'"},
+                                "description": {"type": "string", "description": "One line outfit formula, e.g. 'Olive textured shirt + dark blue jeans + white sneakers.'"},
+                                "why": {"type": "string", "description": "One short line on why it suits the user"},
+                                "search_query": {"type": "string", "description": "Product search query for this style, e.g. 'men olive casual shirt'"}
+                            },
+                            "required": ["name", "description", "search_query"]
+                        }
                     }
                 },
                 "required": ["occasion"]
@@ -176,28 +237,6 @@ OPENAI_TOOLS_SPEC = [
                 "required": ["garment_url", "garment_type"]
             }
         }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "save_user_style_preference",
-            "description": "Explicitly save or update user's persistent style preferences, favorite/disliked colors, fits, brands, retailers, or budget ceiling into their permanent Style DNA.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "preference_type": {
-                        "type": "string",
-                        "enum": ["color", "fit", "brand", "retailer", "disliked_color", "disliked_item", "budget_max", "style_dna"],
-                        "description": "Category of style preference to store"
-                    },
-                    "value": {
-                        "type": "string",
-                        "description": "The specific value (e.g. 'oversized', 'olive', 'Zara', 'no polyester', '5000', 'minimalist streetwear')"
-                    }
-                },
-                "required": ["preference_type", "value"]
-            }
-        }
     }
 ]
 
@@ -216,15 +255,45 @@ class AVAGPTOrchestrator:
 
     def _select_model(self, image_base64: Optional[str] = None) -> str:
         """
-        Smart Cost-Optimizer:
-        - gpt-4o: For multimodal image vision (mirror selfie critique & closet inspection)
-        - gpt-4o-mini: For all text styling, budget queries & live catalog shopping (96% cheaper, 2x faster)
+        Selects the configured OpenAI model, respecting settings.openai_model directly.
+        Defaults to gpt-6-luna for high-speed, cost-efficient personal fashion intelligence.
         """
-        if image_base64:
-            return "gpt-4o"
-        if settings.openai_model and settings.openai_model not in ("gpt-4o", ""):
-            return settings.openai_model
-        return "gpt-4o-mini"
+        if settings.openai_model and settings.openai_model.strip():
+            return settings.openai_model.strip()
+        return "gpt-6-luna"
+
+    def _build_payload(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        max_tokens: int = 1500,
+        stream: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Constructs an OpenAI API payload tailored to the specific model architecture.
+        For GPT-6 Luna / reasoning models: uses max_completion_tokens, reasoning_effort='none' with tools, and omits custom temperature.
+        For GPT-4o / standard models: uses max_completion_tokens and temperature=0.7.
+        """
+        is_luna = "luna" in model.lower() or "gpt-6" in model.lower()
+        payload: Dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_completion_tokens": max_tokens,
+        }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
+        if stream:
+            payload["stream"] = True
+
+        if is_luna:
+            payload["reasoning_effort"] = "none"
+        else:
+            payload["temperature"] = 0.7
+
+        return payload
 
     def _compact_tool_result(self, tool_res: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -241,6 +310,15 @@ class AVAGPTOrchestrator:
                     "slot": p.get("slot", "Garment"),
                 }
                 for p in tool_res["products"][:6]
+            ]
+        if "outfits" in tool_res:
+            compact["outfits"] = [
+                {
+                    "name": o.get("name"),
+                    "description": o.get("description"),
+                    "budget": f"₹{o.get('budget_min', 0):,.0f}–₹{o.get('budget_max', 0):,.0f}",
+                }
+                for o in tool_res["outfits"]
             ]
         if "outfit" in tool_res:
             o = tool_res["outfit"]
@@ -279,9 +357,47 @@ class AVAGPTOrchestrator:
             elif name == "build_curated_outfit":
                 occ = args.get("occasion", "casual")
                 bud = args.get("budget")
-                # Search items if not provided
-                items = await self.tools.search_products(query=f"{occ} trending", limit=6)
-                outfit = await self.tools.build_outfit(occasion=occ, products=items, budget=bud)
+                styles = args.get("styles") or []
+
+                # Exactly 1 single search call (consumes strictly 1 Serper credit!)
+                primary_q = f"{occ} outfit"
+                if isinstance(styles, list) and styles and isinstance(styles[0], dict) and styles[0].get("search_query"):
+                    primary_q = styles[0]["search_query"]
+                all_items = await self.tools.search_products(
+                    query=primary_q,
+                    occasion=occ,
+                    budget=bud,
+                    limit=18,
+                )
+
+                if isinstance(styles, list) and styles:
+                    outfits = []
+                    # Distribute items across the 3 styles in-memory without extra API calls
+                    chunk_sz = max(1, len(all_items) // len(styles[:3])) if all_items else 0
+                    for s_idx, st in enumerate(styles[:3]):
+                        if not isinstance(st, dict):
+                            continue
+                        s_items = all_items[s_idx * chunk_sz : (s_idx + 1) * chunk_sz] if all_items else []
+                        if not s_items and all_items:
+                            s_items = all_items[:4]
+                        if not s_items:
+                            continue
+                        o = await self.tools.build_outfit(
+                            occasion=occ,
+                            products=s_items,
+                            budget=bud,
+                            name=st.get("name"),
+                            description=st.get("description"),
+                            why=st.get("why"),
+                            tag="My top pick" if s_idx == 0 else None,
+                        )
+                        if o and o.get("items"):
+                            outfits.append(o)
+                    if outfits:
+                        return {"status": "success", "outfits": outfits}
+
+                # Single outfit fallback using the already-fetched product pool
+                outfit = await self.tools.build_outfit(occasion=occ, products=all_items[:6], budget=bud)
                 return {"status": "success", "outfit": outfit}
 
             elif name == "compare_product_prices":
@@ -296,13 +412,6 @@ class AVAGPTOrchestrator:
                 res = await self.tools.start_tryon(garment_url=url, garment_type=g_type)
                 return {"status": "success", "tryon_result": res}
 
-            elif name == "save_user_style_preference":
-                pref_type = args.get("preference_type", "")
-                val = args.get("value", "")
-                if hasattr(self.tools, "save_preference"):
-                    res = await self.tools.save_preference(pref_type=pref_type, value=val)
-                    return {"status": "success", "saved": res}
-                return {"status": "success", "saved": {pref_type: val}}
 
             else:
                 return {"status": "error", "message": f"Unknown tool: {name}"}
@@ -329,15 +438,13 @@ class AVAGPTOrchestrator:
                 f"- Color Season: {body.get('color_season', {}).get('season', 'neutral')}\n"
                 f"- Height: {body.get('height_cm', 165)}cm\n"
             )
-        if style_dna_summary:
-            profile_context += f"\n{style_dna_summary}\n"
 
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": AVA_MASTER_FASHION_SYSTEM_PROMPT + profile_context}
         ]
 
-        # Multi-turn history
-        for msg in conversation_history[-6:]:
+        # Multi-turn history (full session context memory)
+        for msg in conversation_history[-20:]:
             messages.append({"role": msg["role"], "content": msg["content"]})
 
         # Current user turn
@@ -346,8 +453,21 @@ class AVAGPTOrchestrator:
             if "," in image_base64:
                 image_base64 = image_base64.split(",", 1)[1]
             img_data_url = f"data:image/jpeg;base64,{image_base64}"
+            raw_prompt = user_prompt or "Critique this outfit and give me styling advice."
+            lower_p = raw_prompt.lower()
+            if any(k in lower_p for k in ("skin", "undertone", "complexion", "color season", "palette")):
+                refined_prompt = (
+                    f"{raw_prompt}\n"
+                    f"[Stylist Directive: Deliver a warm, flattering editorial color consultation in exactly 2 to 3 sentences (under 50 words). "
+                    f"State their radiant Color Season (e.g. Warm Autumn, Deep Winter) and 3 Power Colors. "
+                    f"STRICTLY FORBIDDEN: Do not write articles, blog headings, numbered checklists, or closet homework. "
+                    f"NEVER say 'Explore Your Closet', 'Plan Your Next Outfit', 'Accessorize Thoughtfully', 'Shopping List', 'Finding Your Undertone', or 'Vein Test'.]"
+                )
+            else:
+                refined_prompt = raw_prompt
+
             user_content = [
-                {"type": "text", "text": user_prompt or "Critique this outfit and give me styling advice."},
+                {"type": "text", "text": refined_prompt},
                 {
                     "type": "image_url",
                     "image_url": {"url": img_data_url, "detail": "high"}
@@ -382,18 +502,12 @@ class AVAGPTOrchestrator:
             "Content-Type": "application/json",
         }
 
+        selected_model = self._select_model(image_base64)
+
         discovered_outfits: List[Dict[str, Any]] = []
         tool_calls_log: List[Dict[str, Any]] = []
 
-        selected_model = self._select_model(image_base64)
-        payload = {
-            "model": selected_model,
-            "messages": messages,
-            "tools": OPENAI_TOOLS_SPEC,
-            "tool_choice": "auto",
-            "temperature": 0.7,
-            "max_tokens": 500,
-        }
+        payload = self._build_payload(selected_model, messages, tools=OPENAI_TOOLS_SPEC, max_tokens=1500, stream=False)
 
         # Step 1: Initial Model Call
         resp = await self.client.post(
@@ -401,6 +515,15 @@ class AVAGPTOrchestrator:
             headers=headers,
             json=payload,
         )
+        if resp.status_code != 200:
+            if selected_model != "gpt-4o":
+                logger.warning(f"[AVAGPTOrchestrator] Model {selected_model} HTTP {resp.status_code}, automatically falling back to gpt-4o")
+                fb_payload = self._build_payload("gpt-4o", messages, tools=OPENAI_TOOLS_SPEC, max_tokens=1500, stream=False)
+                resp = await self.client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers=headers,
+                    json=fb_payload,
+                )
         if resp.status_code != 200:
             logger.error(f"[AVAGPTOrchestrator] OpenAI API Error: {resp.status_code} - {resp.text}")
             return {"error": "OPENAI_API_ERROR", "status_code": resp.status_code, "detail": resp.text}
@@ -435,6 +558,8 @@ class AVAGPTOrchestrator:
                     outfit_card = await self.tools.build_outfit("curated", tool_res["products"])
                     if outfit_card and outfit_card.get("items"):
                         discovered_outfits.append(outfit_card)
+                elif "outfits" in tool_res and tool_res["outfits"]:
+                    discovered_outfits.extend(tool_res["outfits"])
                 elif "outfit" in tool_res and tool_res["outfit"]:
                     discovered_outfits.append(tool_res["outfit"])
 
@@ -446,12 +571,15 @@ class AVAGPTOrchestrator:
                 })
 
             # Step 3: Second call to generate final styling explanation based on tool results
-            second_payload = {
-                "model": selected_model,
-                "messages": messages,
-                "temperature": 0.7,
-                "max_tokens": 500,
-            }
+            messages.append({
+                "role": "system",
+                "content": (
+                    "The visual product cards with images, prices, and try-on buttons are automatically rendered directly below your message. "
+                    "Share your expert styling advice, aesthetic rationale, and chic outfit tips naturally. "
+                    "Do not repeat raw product URLs or prices in text since the interactive cards handle that directly."
+                )
+            })
+            second_payload = self._build_payload(selected_model, messages, tools=None, max_tokens=1200, stream=False)
             second_resp = await self.client.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers=headers,
@@ -466,7 +594,7 @@ class AVAGPTOrchestrator:
             final_text = message.get("content") or ""
 
         # Suggested follow-up actions
-        suggested_actions = ["Try this on", "Make it cheaper", "Show another style", "Find shoes to match"]
+        suggested_actions = []
 
         return {
             "message": final_text,
@@ -474,6 +602,250 @@ class AVAGPTOrchestrator:
             "tool_calls_log": tool_calls_log,
             "suggested_actions": suggested_actions,
             "model_used": selected_model,
+        }
+
+    async def plan_reply(
+        self,
+        user_prompt: str,
+        conversation_history: List[Dict[str, str]],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Step 1 of the unified pipeline: classify the request and (for shopping requests)
+        plan the 3 outfit styles / product queries as strict JSON. Returns None on any failure
+        so the caller can fall back to the legacy tool-calling path.
+        """
+        hist = "\n".join(
+            f"{m.get('role', 'user')}: {(m.get('content') or '')[:400]}" for m in conversation_history[-6:]
+        )
+        body = {
+            "model": self._select_model(None),
+            "messages": [
+                {"role": "system", "content": AVA_PLANNER_PROMPT},
+                {"role": "user", "content": f"Conversation so far:\n{hist or '(none)'}\n\nLatest user message: {user_prompt}"},
+            ],
+            "temperature": 0.3,
+            "max_tokens": 700,
+            "response_format": {"type": "json_object"},
+        }
+        try:
+            resp = await self.client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                json=body,
+                timeout=30.0,
+            )
+            if resp.status_code != 200 and body.get("model") != "gpt-4o":
+                logger.info(f"[AVAGPTOrchestrator] Planner model {body.get('model')} HTTP {resp.status_code}, falling back to gpt-4o")
+                body["model"] = "gpt-4o"
+                resp = await self.client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                    json=body,
+                    timeout=30.0,
+                )
+            if resp.status_code != 200:
+                logger.warning(f"[AVAGPTOrchestrator] Planner HTTP {resp.status_code}")
+                return None
+            plan = json.loads(resp.json()["choices"][0]["message"]["content"])
+            return plan if isinstance(plan, dict) else None
+        except Exception as e:
+            logger.warning(f"[AVAGPTOrchestrator] Planner failed, using legacy path: {e}")
+            return None
+
+    async def _stream_text(
+        self,
+        messages: List[Dict[str, Any]],
+        headers: Dict[str, str],
+        model: str,
+        max_tokens: int = 300,
+    ) -> AsyncGenerator[str, None]:
+        """Stream plain assistant text tokens (no tools)."""
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": 0.7,
+            "stream": True,
+            "max_tokens": max_tokens,
+        }
+        async with self.client.stream(
+            "POST",
+            "https://api.openai.com/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=60.0,
+        ) as response:
+            if response.status_code != 200:
+                if model != "gpt-4o":
+                    logger.info(f"[AVAGPTOrchestrator] Stream model {model} HTTP {response.status_code}, falling back to gpt-4o")
+                    fallback_payload = dict(payload, model="gpt-4o")
+                    async with self.client.stream(
+                        "POST",
+                        "https://api.openai.com/v1/chat/completions",
+                        headers=headers,
+                        json=fallback_payload,
+                        timeout=60.0,
+                    ) as fb_resp:
+                        if fb_resp.status_code == 200:
+                            async for line in fb_resp.aiter_lines():
+                                if not line or not line.startswith("data: "):
+                                    continue
+                                raw = line[len("data: "):].strip()
+                                if raw == "[DONE]":
+                                    break
+                                try:
+                                    delta = json.loads(raw)["choices"][0].get("delta", {})
+                                    if delta.get("content"):
+                                        yield delta["content"]
+                                except Exception:
+                                    pass
+                return
+            async for line in response.aiter_lines():
+                if not line or not line.startswith("data: "):
+                    continue
+                raw = line[len("data: "):].strip()
+                if raw == "[DONE]":
+                    break
+                try:
+                    delta = json.loads(raw)["choices"][0].get("delta", {})
+                    if delta.get("content"):
+                        yield delta["content"]
+                except Exception:
+                    pass
+
+    async def _run_planned_reply(
+        self,
+        plan: Dict[str, Any],
+        messages: List[Dict[str, Any]],
+        headers: Dict[str, str],
+        model: str,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Step 2: execute the plan deterministically, emit outfit events, then stream a short intro."""
+        reply_type = plan.get("type")
+        occasion = (plan.get("occasion") or "casual").strip().lower()
+        budget = plan.get("budget")
+        try:
+            budget = float(budget) if budget else None
+        except (TypeError, ValueError):
+            budget = None
+
+        store = (plan.get("store") or "").strip().lower() or None
+        unsupported = (plan.get("unsupported_store") or "").strip() or None
+        if store not in ("myntra", "ajio"):
+            store = None
+        store_label = store.capitalize() if store else "Myntra"
+
+        yield {"event": "status", "data": {"status": "Curating looks from live fashion catalogs..."}}
+
+        outfits: List[Dict[str, Any]] = []
+        if reply_type == "outfit":
+            for idx, st in enumerate((plan.get("styles") or [])[:3]):
+                if not isinstance(st, dict):
+                    continue
+                items = await self.tools.search_products(
+                    query=st.get("search_query") or f"{occasion} {st.get('name', '')}",
+                    platform=store,
+                    occasion=occasion,
+                    budget=budget,
+                    max_price=budget,
+                    limit=6,
+                )
+                if not items:
+                    continue
+                o = await self.tools.build_outfit(
+                    occasion=occasion,
+                    products=items,
+                    budget=budget,
+                    name=st.get("name"),
+                    description=st.get("description"),
+                    why=st.get("why"),
+                    tag="My top pick" if idx == 0 else None,
+                )
+                if o and o.get("items"):
+                    o["kind"] = "style"
+                    outfits.append(o)
+        else:  # product_search
+            for idx, pq in enumerate((plan.get("product_queries") or [])[:4]):
+                if not isinstance(pq, str) or not pq.strip():
+                    continue
+                items = await self.tools.search_products(
+                    query=pq,
+                    platform=store,
+                    occasion=occasion,
+                    budget=budget,
+                    max_price=budget,
+                    limit=3,
+                )
+                if not items:
+                    continue
+                p = items[0]
+                price = float(p.get("price") or 0)
+                outfits.append({
+                    "id": f"prod_{uuid.uuid4().hex[:6]}",
+                    "name": p.get("title") or pq,
+                    "occasion": occasion,
+                    "style": "product",
+                    "kind": "product",
+                    "items": [p],
+                    "total_price": price,
+                    "description": f"{p.get('seller') or store_label} · {p.get('slot') or 'Pick'}",
+                    "tag": "My top pick" if idx == 0 else None,
+                    "budget_min": round(price),
+                    "budget_max": round(price),
+                    "actions": ["TRY_ON", "SHOP", "SAVE", "MAKE_CHEAPER", "SWAP"],
+                })
+
+        for o in outfits:
+            yield {"event": "outfit", "data": {"outfit": o}}
+
+        # Authentic stylist consultation, streamed
+        notes = []
+        if unsupported:
+            notes.append(
+                f"The user asked for {unsupported}, which AVA does not support yet. State this clearly in ONE polite sentence, "
+                f"then say you are showing options from {store_label} instead."
+            )
+        if outfits and reply_type == "outfit":
+            names = ", ".join(o.get("name", "") for o in outfits)
+            notes.append(
+                f"CRITICAL LUXURY EDITORIAL STYLIST INSTRUCTION:\n"
+                f"The mobile app will display interactive visual lookbook cards for these {len(outfits)} styles ({names}) from {store_label}"
+                f"{f' within ₹{budget:,.0f}' if budget else ''} directly below your response.\n"
+                "- KEEP YOUR TEXT RESPONSE CONCISE, ELEGANT, AND REFINED (2 to 3 sentences maximum, like a Net-a-Porter or Vogue personal stylist).\n"
+                "- DO NOT write separate paragraphs for each outfit, and DO NOT write 'Aesthetic Rationale:', 'Styling Tip:', or 'Color Harmony:' in text, because the visual look cards below already present each look, formula, and garment!\n"
+                "- Structure your concise reply in two clean parts:\n"
+                "  1. A warm, chic 1-2 sentence introduction acknowledging the occasion, styling direction, and store/budget (bold store and budget with **).\n"
+                "  2. A brief 1-sentence closing note inviting the user to refine or explore (e.g., 'Let me know if you would like to adjust the color palette, explore alternative footwear, or try any look on your 3D avatar!').\n"
+                "- NEVER duplicate outfit names, price breakdowns, or long bullet lists in text."
+            )
+        elif outfits:
+            notes.append(
+                f"The app is rendering visual cards for these pieces from {store_label} directly below. "
+                "Write a warm, concise stylist introduction explaining why these pieces fit the user's request. "
+                "Do not repeat product links or raw prices in text."
+            )
+        else:
+            notes.append(
+                "No products could be found. Apologise briefly in one sentence and ask one clarifying question."
+            )
+
+        stream_messages = list(messages) + [{"role": "system", "content": " ".join(notes)}]
+        full_text: List[str] = []
+        try:
+            async for tok in self._stream_text(stream_messages, headers, model, max_tokens=1000):
+                full_text.append(tok)
+                yield {"event": "token", "data": {"chunk": tok}}
+        except Exception as e:
+            logger.debug(f"[AVAGPTOrchestrator] Planned intro stream error: {e}")
+
+        actions = []
+        yield {
+            "event": "done",
+            "data": {
+                "message": "".join(full_text),
+                "outfits": outfits,
+                "suggested_actions": actions,
+                "model_used": model,
+            },
         }
 
     async def stream_chat(
@@ -503,15 +875,8 @@ class AVAGPTOrchestrator:
         }
 
         selected_model = self._select_model(image_base64)
-        payload = {
-            "model": selected_model,
-            "messages": messages,
-            "tools": OPENAI_TOOLS_SPEC,
-            "tool_choice": "auto",
-            "temperature": 0.7,
-            "stream": True,
-            "max_tokens": 500,
-        }
+
+        payload = self._build_payload(selected_model, messages, tools=OPENAI_TOOLS_SPEC, max_tokens=1500, stream=True)
 
         full_content = []
         tool_calls_in_progress: Dict[int, Dict[str, Any]] = {}
@@ -525,6 +890,21 @@ class AVAGPTOrchestrator:
                 timeout=60.0
             ) as response:
                 if response.status_code != 200:
+                    if selected_model != "gpt-4o":
+                        logger.info(f"[AVAGPTOrchestrator] stream_chat model {selected_model} HTTP {response.status_code}, falling back to gpt-4o")
+                        fb_payload = self._build_payload("gpt-4o", messages, tools=OPENAI_TOOLS_SPEC, max_tokens=1500, stream=False)
+                        fb_response = await self.client.post(
+                            "https://api.openai.com/v1/chat/completions",
+                            headers=headers,
+                            json=fb_payload,
+                            timeout=60.0
+                        )
+                        if fb_response.status_code == 200:
+                            fb_data = fb_response.json()
+                            msg_content = fb_data["choices"][0]["message"].get("content", "")
+                            yield {"event": "token", "data": {"chunk": msg_content}}
+                            yield {"event": "done", "data": {"message": msg_content, "outfits": [], "suggested_actions": [], "model_used": "gpt-4o"}}
+                            return
                     err_body = await response.aread()
                     yield {
                         "event": "error",
@@ -602,6 +982,13 @@ class AVAGPTOrchestrator:
                                 "event": "outfit",
                                 "data": {"outfit": outfit}
                             }
+                    elif "outfits" in tool_res and tool_res["outfits"]:
+                        for st_outfit in tool_res["outfits"]:
+                            discovered_outfits.append(st_outfit)
+                            yield {
+                                "event": "outfit",
+                                "data": {"outfit": st_outfit}
+                            }
                     elif "outfit" in tool_res and tool_res["outfit"]:
                         discovered_outfits.append(tool_res["outfit"])
                         yield {
@@ -619,14 +1006,17 @@ class AVAGPTOrchestrator:
                 # Stream the final styling explanation
                 messages.append({"role": "assistant", "tool_calls": assistant_tool_calls})
                 messages.extend(tool_result_messages)
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "The visual product cards with images, prices, and links are automatically rendered directly below your message. "
+                        "As an expert personal stylist, write a chic, personalized consultation: explain the aesthetic rationale, "
+                        "mention the user's budget and store naturally (bold with **), and provide 1-2 pro styling or color harmony tips for the occasion. "
+                        "Do not list raw product names, prices, or shop links in text, as the interactive cards handle that directly."
+                    )
+                })
 
-                second_payload = {
-                    "model": selected_model,
-                    "messages": messages,
-                    "temperature": 0.7,
-                    "stream": True,
-                    "max_tokens": 500,
-                }
+                second_payload = self._build_payload(selected_model, messages, tools=None, max_tokens=1200, stream=True)
                 try:
                     async with self.client.stream(
                         "POST",
@@ -664,7 +1054,7 @@ class AVAGPTOrchestrator:
                 "data": {
                     "message": "".join(full_content),
                     "outfits": discovered_outfits,
-                    "suggested_actions": ["Try on this look", "Make it cheaper", "Explore more styles", "Shop pieces"],
+                    "suggested_actions": [],
                     "model_used": selected_model,
                 }
             }

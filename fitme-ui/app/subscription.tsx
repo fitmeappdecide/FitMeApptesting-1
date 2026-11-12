@@ -5,6 +5,8 @@ import {
   Platform, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import { Ionicons } from '@expo/vector-icons';
 import { AppHeader } from '../src/components/AppHeader';
 import { Colors, Spacing, Radii } from '../src/constants/theme';
@@ -39,6 +41,7 @@ const fStyles = StyleSheet.create({
 /* ─── Main screen ───────────────────────────────────── */
 
 export default function Subscription() {
+  const router = useRouter();
   const { width: SCREEN_W } = useWindowDimensions();
   const { isPremium, setPremium } = useUserStore();
   const scrollRef  = useRef<ScrollView>(null);
@@ -54,21 +57,16 @@ export default function Subscription() {
     setActivePg(pg);
   };
 
-  /* Billing actions ── TODO: wire RevenueCat ───────── */
+  /* Billing actions ── Subscriptions ───────────────── */
   const handleUpgrade = () => {
-    // TODO: Present RevenueCat paywall (Offerings.current) for Pro purchase
     Alert.alert(
-      'Upgrade to Pro',
-      'This will open the native purchase flow.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Mock Purchase ✓', onPress: () => setPremium(true) },
-      ],
+      'FitMe Pro',
+      'Pro subscriptions will be available in the upcoming release. Enjoy all features in the meantime!',
+      [{ text: 'OK' }],
     );
   };
 
   const handleManage = () => {
-    // TODO: Open RevenueCat CustomerCenter or native subscription management
     if (Platform.OS === 'ios') {
       Linking.openURL('https://apps.apple.com/account/subscriptions').catch(() =>
         Alert.alert('Manage Subscription', 'Unable to open subscription management. Please go to Settings → Apple ID → Subscriptions.'),
@@ -81,13 +79,11 @@ export default function Subscription() {
   };
 
   const handleRestore = () => {
-    // TODO: Call RevenueCat.restorePurchases() and sync isPremium state
-    Alert.alert('Restore Purchases', 'Checking for previous purchases…\n\n(RevenueCat integration pending)');
+    Alert.alert('Restore Purchases', 'No active subscriptions found for this account.');
   };
 
   const handleBilling = () => {
-    // TODO: Fetch billing history from RevenueCat or App Store / Play billing API
-    Alert.alert('Billing History', 'Retrieving your billing history…\n\n(RevenueCat integration pending)');
+    Alert.alert('Billing History', 'No previous billing transactions found.');
   };
 
   /* ─── Render ──────────────────────────────────────── */
@@ -264,6 +260,34 @@ export default function Subscription() {
           of the current period. Manage or cancel in your{' '}
           {Platform.OS === 'ios' ? 'App Store account settings' : 'Google Play account'}.
         </Text>
+
+        <View style={styles.legalLinksRow}>
+          <TouchableOpacity
+            onPress={() => {
+              WebBrowser.openBrowserAsync('https://fitmefashion.com/terms-and-conditions', {
+                presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+              }).catch(() => {
+                Linking.openURL('https://fitmefashion.com/terms-and-conditions');
+              });
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.legalLink}>Terms of Service</Text>
+          </TouchableOpacity>
+          <Text style={styles.legalDivider}>·</Text>
+          <TouchableOpacity
+            onPress={() => {
+              WebBrowser.openBrowserAsync('https://fitmefashion.com/privacy-policy', {
+                presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+              }).catch(() => {
+                Linking.openURL('https://fitmefashion.com/privacy-policy');
+              });
+            }}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.legalLink}>Privacy Policy</Text>
+          </TouchableOpacity>
+        </View>
 
         <View style={{ height: Spacing.xxxl }} />
       </ScrollView>
@@ -449,6 +473,23 @@ const styles = StyleSheet.create({
     fontSize: 11, color: Colors.mutedForeground,
     lineHeight: 17, textAlign: 'center',
     paddingHorizontal: Spacing.xxl,
+    marginBottom: Spacing.sm,
+  },
+  legalLinksRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
     marginBottom: Spacing.xl,
+  },
+  legalLink: {
+    fontSize: 11,
+    color: Colors.accent,
+    textDecorationLine: 'underline',
+    fontWeight: '500',
+  },
+  legalDivider: {
+    fontSize: 11,
+    color: Colors.mutedForeground,
   },
 });

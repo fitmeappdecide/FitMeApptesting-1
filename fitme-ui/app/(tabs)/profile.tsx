@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { useRouter, Link, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as WebBrowser from 'expo-web-browser';
 import { Ionicons } from '@expo/vector-icons';
 import { AppHeader } from '../../src/components/AppHeader';
 import { CachedImage } from '../../src/components/CachedImage';
@@ -16,7 +17,12 @@ import { userApi } from '../../src/services/api';
 import { logout, deleteCurrentUserFromFirebase } from '../../src/firebase/auth';
 import { purgeAllSessionState } from '../../src/services/sessionManager';
 import { auth } from '../../src/firebase';
+import * as StoreReview from 'expo-store-review';
 
+
+/* ─── Feature Flags ─────────────────────────────────── */
+/* Set to true in v1.1 when RevenueCat IAP subscription is activated */
+const SHOW_SUBSCRIPTION = false;
 
 /* ─── Types ─────────────────────────────────────────── */
 
@@ -119,30 +125,43 @@ export default function Profile() {
 
   /* Menu Handlers ─────────────────────────────────── */
   const handleSupport = () => {
-    Linking.openURL('https://fitmefashion.com/contact').catch(() =>
-      Alert.alert('Error', 'Unable to open contact page.'),
-    );
+    Linking.openURL('mailto:fitme.appsupport@gmail.com').catch(() => {
+      router.push('/contact-support');
+    });
   };
 
-  const handlePrivacy = () => {
-    Linking.openURL('https://fitmefashion.com/privacy-policy').catch(() =>
-      Alert.alert('Error', 'Unable to open privacy policy.'),
-    );
+  const handlePrivacy = async () => {
+    try {
+      await WebBrowser.openBrowserAsync('https://fitmefashion.com/privacy-policy', {
+        presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+      });
+    } catch {
+      Linking.openURL('https://fitmefashion.com/privacy-policy').catch(() =>
+        Alert.alert('Error', 'Unable to open privacy policy.'),
+      );
+    }
   };
 
-  const handleTerms = () => {
-    Linking.openURL('https://fitmefashion.com/terms-and-conditions').catch(() =>
-      Alert.alert('Error', 'Unable to open terms of service.'),
-    );
+  const handleTerms = async () => {
+    try {
+      await WebBrowser.openBrowserAsync('https://fitmefashion.com/terms-and-conditions', {
+        presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+      });
+    } catch {
+      Linking.openURL('https://fitmefashion.com/terms-and-conditions').catch(() =>
+        Alert.alert('Error', 'Unable to open terms of service.'),
+      );
+    }
   };
 
-  const handleRate = () => {
-    const storeUrl = Platform.OS === 'ios'
-      ? 'https://apps.apple.com/app/id0000000000'
-      : 'market://details?id=app.fitme.app';
-    Linking.openURL(storeUrl).catch(() =>
-      Alert.alert('Rate FitMe', 'Unable to open the app store. Please try again later.'),
-    );
+  const handleRate = async () => {
+    try {
+      if (await StoreReview.isAvailableAsync()) {
+        await StoreReview.requestReview();
+        return;
+      }
+    } catch (_) {}
+    Alert.alert('Rate FitMe', 'Thank you for supporting FitMe! In-app reviews will be enabled upon official store release.');
   };
 
   /* Delete Account ───────────────────────────────── */
@@ -229,13 +248,15 @@ export default function Profile() {
             <Text style={styles.displayName}>{displayName}</Text>
             <Text style={styles.displayEmail}>{displayEmail}</Text>
 
-            {/* Plan badge */}
-            {isPremium ? (
-              <ProMemberBadge variant="standard" />
-            ) : (
-              <View style={styles.freeBadge}>
-                <Text style={styles.freeBadgeText}>Free Plan</Text>
-              </View>
+            {/* Plan badge (hidden until subscription update) */}
+            {SHOW_SUBSCRIPTION && (
+              isPremium ? (
+                <ProMemberBadge variant="standard" />
+              ) : (
+                <View style={styles.freeBadge}>
+                  <Text style={styles.freeBadgeText}>Free Plan</Text>
+                </View>
+              )
             )}
           </View>
         </View>
@@ -260,14 +281,17 @@ export default function Profile() {
             href="/my-photos"
             label="My Photos"
             icon="camera-outline"
+            hasBorder={SHOW_SUBSCRIPTION}
           />
-          <MenuRow
-            href="/subscription"
-            label="Subscription"
-            icon="card-outline"
-            sublabel={isPremium ? 'FitMe Pro' : 'Free'}
-            hasBorder={false}
-          />
+          {SHOW_SUBSCRIPTION && (
+            <MenuRow
+              href="/subscription"
+              label="Subscription"
+              icon="card-outline"
+              sublabel={isPremium ? 'FitMe Pro' : 'Free'}
+              hasBorder={false}
+            />
+          )}
         </View>
 
         {/* ── Support & Legal ──────────────────────── */}

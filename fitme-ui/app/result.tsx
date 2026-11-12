@@ -8,6 +8,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import * as WebBrowser from 'expo-web-browser';
+import { resolveExactProductUrl } from '../src/services/avaService';
 import { AppHeader } from '../src/components/AppHeader';
 import { CachedImage } from '../src/components/CachedImage';
 import { ZoomableImageViewer } from '../src/components/ZoomableImageViewer';
@@ -39,6 +41,9 @@ const FALLBACK_IMG =
 // Set to true to re-enable the "Complete the look" section & recommendations
 const ENABLE_COMPLETE_THE_LOOK = false;
 
+// Set to true to re-enable the "Compare prices" section on Your Look
+const ENABLE_PRICE_COMPARISON = false;
+
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 /** Downloads a remote URL to a local cache file and returns the local path. */
@@ -59,6 +64,7 @@ export type ComparisonState = 'initial' | 'loading' | 'results' | 'error';
 
 export interface ComparisonCandidate {
   id: string;
+  title?: string;
   platform: string;
   price: string;
   numericPrice: number;
@@ -99,6 +105,8 @@ export default function Result() {
     initialPlatform?: string;
     initialResultUrl?: string;
     initialGarmentUrl?: string;
+    initialPrice?: string;
+    initialProductUrl?: string;
   }>();
   const sessionJobId = useSession((s) => s.tryOnJobId);
   const activeJobId = (params.jobId || sessionJobId) as string | undefined;
@@ -139,12 +147,14 @@ export default function Result() {
               : 'Virtual Look'),
           brand: storeMatch.brand || params.initialBrand || 'FitMe',
           platform: storeMatch.platform || params.initialPlatform,
-          price: storeMatch.price !== null && storeMatch.price !== undefined ? String(storeMatch.price) : undefined,
-          product_url: storeMatch.product_url || undefined,
+          price:
+            storeMatch.price !== null && storeMatch.price !== undefined
+              ? String(storeMatch.price)
+              : params.initialPrice || undefined,
+          product_url: storeMatch.product_url || params.initialProductUrl || undefined,
           garment_image_url:
+            storeMatch.garment_image_url ||
             params.initialGarmentUrl ||
-            storeMatch.thumbnail_url ||
-            storeMatch.result_image_urls?.[0] ||
             null,
         };
       }
@@ -163,7 +173,9 @@ export default function Result() {
         title: params.initialTitle || 'Virtual Look',
         brand: params.initialBrand || 'FitMe',
         platform: params.initialPlatform,
-        garment_image_url: params.initialGarmentUrl || params.initialResultUrl || null,
+        price: params.initialPrice || undefined,
+        product_url: params.initialProductUrl || undefined,
+        garment_image_url: params.initialGarmentUrl || null,
       };
     }
 
@@ -253,10 +265,9 @@ export default function Result() {
             product_url: storeMatch.product_url || prev?.product_url,
             affiliate_url: prev?.affiliate_url,
             garment_image_url:
-              prev?.garment_image_url ||
+              storeMatch.garment_image_url ||
               params.initialGarmentUrl ||
-              storeMatch.thumbnail_url ||
-              storeMatch.result_image_urls?.[0] ||
+              prev?.garment_image_url ||
               null,
             garment_images: prev?.garment_images,
           }));
@@ -313,7 +324,7 @@ export default function Result() {
                 price: localJob.price !== null && localJob.price !== undefined ? String(localJob.price) : prev?.price,
                 product_url: localJob.product_url || prev?.product_url,
                 affiliate_url: prev?.affiliate_url,
-                garment_image_url: localJob.garment_image_url || prev?.garment_image_url || params.initialGarmentUrl,
+                garment_image_url: localJob.garment_image_url || params.initialGarmentUrl || prev?.garment_image_url || null,
                 garment_images: prev?.garment_images,
               }));
               setIsSaved(Boolean(localJob.is_saved));
@@ -441,6 +452,7 @@ export default function Result() {
                 : undefined;
               return {
                 id: c.id || `cand-${idx}`,
+                title: c.title || productTitle || 'Garment Item',
                 platform: formatRetailerName(c.retailer),
                 price: c.price ? `₹${numP.toLocaleString('en-IN')}` : 'Check price',
                 numericPrice: numP,
@@ -481,6 +493,7 @@ export default function Result() {
           if (res?.candidates && res.candidates.length > 0) {
             resolvedCandidates = res.candidates.map((c: LinkComparisonOffer) => ({
               id: c.id,
+              title: c.title || productTitle || 'Garment Item',
               platform: c.platform || formatRetailerName(c.retailer),
               price: c.formatted_price,
               numericPrice: c.price || 0,
@@ -571,23 +584,47 @@ export default function Result() {
   ]);
 
   useEffect(() => {
-    if (params.autoCompare === '1' && comparisonState === 'initial' && (detail || extractedProduct || activeJobId)) {
+    if (ENABLE_PRICE_COMPARISON && params.autoCompare === '1' && comparisonState === 'initial' && (detail || extractedProduct || activeJobId)) {
       handleFetchPriceComparison();
     }
   }, [params.autoCompare, comparisonState, detail, extractedProduct, activeJobId, handleFetchPriceComparison]);
 
   const handleOpenCandidate = useCallback(
-    async (candidateUrl?: string) => {
-      const targetUrl = candidateUrl || shopUrl || detail?.product_url || extractedProduct?.sourceUrl;
-      if (targetUrl) {
-        try {
-          await Linking.openURL(targetUrl);
-        } catch (err) {
-          console.warn('Could not open store URL:', err);
-          Alert.alert('Store Link', 'Could not open the store page.');
-        }
-      } else {
+    async (candidateUrl?: string, title?: string, platform?: string) => {
+      let targetUrl = candidateUrl || shopUrl || detail?.product_url || extractedProduct?.sourceUrl;
+      if (!targetUrl) {
         Alert.alert('Store Link', 'No product store link is available.');
+        return;
+      }
+
+      try {
+        const isDirectPdp =
+          targetUrl &&
+          !targetUrl.includes('google.com/search') &&
+          !targetUrl.includes('/s?k=') &&
+          (targetUrl.includes('/buy') ||
+            targetUrl.includes('/dp/') ||
+            targetUrl.includes('/p/') ||
+            targetUrl.includes('/products/') ||
+            targetUrl.includes('/item/'));
+
+        if (!isDirectPdp && title) {
+          try {
+            const resolved = await resolveExactProductUrl(title, platform);
+            if (resolved && resolved.direct_url) {
+              targetUrl = resolved.direct_url;
+            }
+          } catch (_) {}
+        }
+
+        if (targetUrl) {
+          await WebBrowser.openBrowserAsync(targetUrl, {
+            presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+          });
+        }
+      } catch (err) {
+        console.warn('Could not open store URL via WebBrowser, falling back:', err);
+        Linking.openURL(targetUrl).catch(() => {});
       }
     },
     [shopUrl, detail?.product_url, extractedProduct?.sourceUrl]
@@ -876,7 +913,8 @@ export default function Result() {
         </View>
 
         {/* Compare Prices (On-Demand) */}
-        <View style={styles.compareSection}>
+        {ENABLE_PRICE_COMPARISON && (
+          <View style={styles.compareSection}>
           {/* Header Row */}
           <View style={styles.compareHeader}>
             <View style={styles.compareHeaderLeft}>
@@ -925,7 +963,7 @@ export default function Result() {
                     <TouchableOpacity
                       key={candidate.id}
                       style={[styles.candidateCard, isBestDeal && styles.candidateCardBest]}
-                      onPress={() => handleOpenCandidate(candidate.url)}
+                      onPress={() => handleOpenCandidate(candidate.url, candidate.title, candidate.platform)}
                       activeOpacity={0.8}
                     >
                       {isBestDeal ? (
@@ -992,7 +1030,8 @@ export default function Result() {
               </TouchableOpacity>
             </View>
           )}
-        </View>
+          </View>
+        )}
 
         {/* Complete the look */}
         {ENABLE_COMPLETE_THE_LOOK && (

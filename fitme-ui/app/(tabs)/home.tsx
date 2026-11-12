@@ -24,6 +24,7 @@ import { normalizeProductUrl } from '../../src/utils/url';
 
 // Feature flag: set to false to instantly revert to previous beige box hero
 const SHOW_EDITORIAL_HERO = true;
+const ENABLE_RECENT_PRICE_COMPARISONS = false;
 
 function getComparisonImageUri(item: any): string {
   if (!item) return 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=600&q=80';
@@ -371,6 +372,7 @@ export default function Home() {
               source={require('../../assets/hero-image1.png')}
               style={{ position: 'absolute', top: heroTop, left: heroLeft, width: heroW, height: heroH }}
               resizeMode="cover"
+              fadeDuration={0}
             />
 
 
@@ -583,7 +585,9 @@ export default function Home() {
                         initialBrand: p.brand || '',
                         initialPlatform: p.platform || '',
                         initialResultUrl: p.result_image_urls?.[0] || p.thumbnail_url || imgUri || '',
-                        initialGarmentUrl: p.thumbnail_url || p.result_image_urls?.[0] || imgUri || '',
+                        initialGarmentUrl: p.garment_image_url || '',
+                        initialPrice: p.price !== null && p.price !== undefined ? String(p.price) : '',
+                        initialProductUrl: p.product_url || '',
                       },
                     } as any}
                     key={p.id}
@@ -624,105 +628,107 @@ export default function Home() {
         </View>
 
         {/* Recent Price Comparisons (Replaces Trending now) */}
-        <View style={[styles.section, { paddingBottom: 100 }]}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Recent Price Comparisons</Text>
-            <Link href={"/price-comparisons" as any} asChild>
-              <TouchableOpacity style={styles.seeAllRow} activeOpacity={0.7}>
-                <Text style={styles.seeAllText}>See all</Text>
-                <Ionicons name="arrow-forward" size={12} color={Colors.accent} />
-              </TouchableOpacity>
-            </Link>
-          </View>
+        {ENABLE_RECENT_PRICE_COMPARISONS && (
+          <View style={[styles.section, { paddingBottom: 100 }]}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Recent Price Comparisons</Text>
+              <Link href={"/price-comparisons" as any} asChild>
+                <TouchableOpacity style={styles.seeAllRow} activeOpacity={0.7}>
+                  <Text style={styles.seeAllText}>See all</Text>
+                  <Ionicons name="arrow-forward" size={12} color={Colors.accent} />
+                </TouchableOpacity>
+              </Link>
+            </View>
 
-          {recentComparisons.length === 0 ? (
-            <View style={styles.emptyCompCard}>
-              <View style={styles.emptyIconCircle}>
-                <Ionicons name="pricetags-outline" size={24} color="#A86248" />
+            {recentComparisons.length === 0 ? (
+              <View style={styles.emptyCompCard}>
+                <View style={styles.emptyIconCircle}>
+                  <Ionicons name="pricetags-outline" size={24} color="#A86248" />
+                </View>
+                <Text style={styles.emptyCompTitle}>No price comparisons yet.</Text>
+                <Text style={styles.emptyCompBody}>
+                  Tap 'Compare prices' on any generated try-on to find and compare deals across stores.
+                </Text>
+                <TouchableOpacity
+                  style={styles.emptyCompBtn}
+                  onPress={() => router.push('/(tabs)/looks' as any)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.emptyCompBtnText}>View Your Looks</Text>
+                </TouchableOpacity>
               </View>
-              <Text style={styles.emptyCompTitle}>No price comparisons yet.</Text>
-              <Text style={styles.emptyCompBody}>
-                Tap 'Compare prices' on any generated try-on to find and compare deals across stores.
-              </Text>
-              <TouchableOpacity
-                style={styles.emptyCompBtn}
-                onPress={() => router.push('/(tabs)/looks' as any)}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.emptyCompBtnText}>View Your Looks</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={styles.compMasonry}>
-              <View style={styles.compCol}>
-                {recentComparisons.filter((_, i) => i % 2 === 0).map((item) => (
-                  <Link
-                    href={`/find-product/results?comparisonId=${item.id}${item.scan_id ? `&scanId=${item.scan_id}` : ''}` as any}
-                    key={item.id}
-                    asChild
-                  >
-                    <TouchableOpacity style={styles.compCard} activeOpacity={0.85}>
-                      <CachedImage
-                        uri={getComparisonImageUri(item)}
-                        style={styles.compImg}
-                      />
-                      <View style={styles.compInfo}>
-                        <Text style={styles.compTitle} numberOfLines={1}>
-                          {getComparisonTitle(item)}
-                        </Text>
-                        <View style={styles.compRetailerRow}>
-                          <RetailerLogo retailer={item.best_retailer} size={12} />
-                          <Text style={styles.compRetailer} numberOfLines={1}>
-                            {formatRetailerName(item.best_retailer)}
+            ) : (
+              <View style={styles.compMasonry}>
+                <View style={styles.compCol}>
+                  {recentComparisons.filter((_, i) => i % 2 === 0).map((item) => (
+                    <Link
+                      href={`/find-product/results?comparisonId=${item.id}${item.scan_id ? `&scanId=${item.scan_id}` : ''}` as any}
+                      key={item.id}
+                      asChild
+                    >
+                      <TouchableOpacity style={styles.compCard} activeOpacity={0.85}>
+                        <CachedImage
+                          uri={getComparisonImageUri(item)}
+                          style={styles.compImg}
+                        />
+                        <View style={styles.compInfo}>
+                          <Text style={styles.compTitle} numberOfLines={1}>
+                            {getComparisonTitle(item)}
                           </Text>
+                          <View style={styles.compRetailerRow}>
+                            <RetailerLogo retailer={item.best_retailer} size={12} />
+                            <Text style={styles.compRetailer} numberOfLines={1}>
+                              {formatRetailerName(item.best_retailer)}
+                            </Text>
+                          </View>
+                          <View style={styles.compPriceRow}>
+                            <Text style={styles.compPrice}>
+                              {item.best_price ? `₹${item.best_price.toLocaleString('en-IN')}` : 'Check price'}
+                            </Text>
+                            <Text style={styles.compBestBadge}>Best price</Text>
+                          </View>
                         </View>
-                        <View style={styles.compPriceRow}>
-                          <Text style={styles.compPrice}>
-                            {item.best_price ? `₹${item.best_price.toLocaleString('en-IN')}` : 'Check price'}
+                      </TouchableOpacity>
+                    </Link>
+                  ))}
+                </View>
+                <View style={styles.compCol}>
+                  {recentComparisons.filter((_, i) => i % 2 === 1).map((item) => (
+                    <Link
+                      href={`/find-product/results?comparisonId=${item.id}${item.scan_id ? `&scanId=${item.scan_id}` : ''}` as any}
+                      key={item.id}
+                      asChild
+                    >
+                      <TouchableOpacity style={styles.compCard} activeOpacity={0.85}>
+                        <CachedImage
+                          uri={getComparisonImageUri(item)}
+                          style={styles.compImg}
+                        />
+                        <View style={styles.compInfo}>
+                          <Text style={styles.compTitle} numberOfLines={1}>
+                            {getComparisonTitle(item)}
                           </Text>
-                          <Text style={styles.compBestBadge}>Best price</Text>
+                          <View style={styles.compRetailerRow}>
+                            <RetailerLogo retailer={item.best_retailer} size={12} />
+                            <Text style={styles.compRetailer} numberOfLines={1}>
+                              {formatRetailerName(item.best_retailer)}
+                            </Text>
+                          </View>
+                          <View style={styles.compPriceRow}>
+                            <Text style={styles.compPrice}>
+                              {item.best_price ? `₹${item.best_price.toLocaleString('en-IN')}` : 'Check price'}
+                            </Text>
+                            <Text style={styles.compBestBadge}>Best price</Text>
+                          </View>
                         </View>
-                      </View>
-                    </TouchableOpacity>
-                  </Link>
-                ))}
+                      </TouchableOpacity>
+                    </Link>
+                  ))}
+                </View>
               </View>
-              <View style={styles.compCol}>
-                {recentComparisons.filter((_, i) => i % 2 === 1).map((item) => (
-                  <Link
-                    href={`/find-product/results?comparisonId=${item.id}${item.scan_id ? `&scanId=${item.scan_id}` : ''}` as any}
-                    key={item.id}
-                    asChild
-                  >
-                    <TouchableOpacity style={styles.compCard} activeOpacity={0.85}>
-                      <CachedImage
-                        uri={getComparisonImageUri(item)}
-                        style={styles.compImg}
-                      />
-                      <View style={styles.compInfo}>
-                        <Text style={styles.compTitle} numberOfLines={1}>
-                          {getComparisonTitle(item)}
-                        </Text>
-                        <View style={styles.compRetailerRow}>
-                          <RetailerLogo retailer={item.best_retailer} size={12} />
-                          <Text style={styles.compRetailer} numberOfLines={1}>
-                            {formatRetailerName(item.best_retailer)}
-                          </Text>
-                        </View>
-                        <View style={styles.compPriceRow}>
-                          <Text style={styles.compPrice}>
-                            {item.best_price ? `₹${item.best_price.toLocaleString('en-IN')}` : 'Check price'}
-                          </Text>
-                          <Text style={styles.compBestBadge}>Best price</Text>
-                        </View>
-                      </View>
-                    </TouchableOpacity>
-                  </Link>
-                ))}
-              </View>
-            </View>
-          )}
-        </View>
+            )}
+          </View>
+        )}
 
       </ScrollView>
     </View>

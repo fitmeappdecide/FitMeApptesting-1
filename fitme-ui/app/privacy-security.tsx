@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { AppHeader } from '../src/components/AppHeader';
@@ -54,8 +54,8 @@ export default function PrivacySecurity() {
             </View>
             <Text style={styles.cardTitle}>Contact Privacy Team</Text>
           </View>
-          <TouchableOpacity>
-            <Text style={styles.email}>support@fitme.app</Text>
+          <TouchableOpacity onPress={() => Linking.openURL('mailto:fitme.appsupport@gmail.com')}>
+            <Text style={styles.email}>fitme.appsupport@gmail.com</Text>
           </TouchableOpacity>
         </View>
 

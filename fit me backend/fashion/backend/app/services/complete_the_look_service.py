@@ -583,8 +583,63 @@ async def _fetch_unified_candidates(
 
     candidates: List[Dict[str, Any]] = []
 
-    # 1. SerpApi Google Shopping (Primary Engine)
-    if serpapi_key:
+    # 1. Serper.dev Google Shopping (Fast, Cost-Effective Primary Engine)
+    serper_key = getattr(settings, "serper_api_key", None) or os.getenv("SERPER_API_KEY")
+    if serper_key:
+        try:
+            async with httpx.AsyncClient(timeout=6.0, verify=False) as client:
+                resp = await client.post(
+                    "https://google.serper.dev/shopping",
+                    headers={"X-API-KEY": serper_key, "Content-Type": "application/json"},
+                    json={"q": query, "gl": "in", "hl": "en"},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for item in data.get("shopping", []):
+                        title = item.get("title") or ""
+                        link = item.get("link")
+                        img = item.get("imageUrl")
+                        seller = item.get("source") or "Online Store"
+                        raw_price = None
+                        if item.get("price"):
+                            m_p = re.search(r"[\d,.]+", str(item.get("price")))
+                            if m_p:
+                                try:
+                                    raw_price = float(m_p.group(0).replace(",", ""))
+                                except Exception:
+                                    pass
+                        if not link and seller:
+                            # Clean noise from product title (e.g. "(42) by Myntra", "Online in India", etc.)
+                            clean_t = re.sub(r"\s*\(\s*[\w\d]+\s*\)", "", title)
+                            clean_t = re.sub(r"(?i)\s+by\s+(myntra|ajio|amazon|flipkart|meesho|tata\s*cliq|nykaa)", "", clean_t)
+                            clean_t = re.sub(r"(?i)\s+(online\s+in\s+india|at\s+best\s+price|mrp\s*₹?\s*[\d,]+|at\s+rs\.?\s*[\d,]+)", "", clean_t)
+                            clean_t = re.sub(r"[^\w\s\-\&]", " ", clean_t)
+                            clean_t = " ".join(clean_t.split()).strip() or title.strip()
+
+                            s_clean = seller.lower().replace(" ", "").replace(".in", "").replace(".com", "")
+                            if "ajio" in s_clean:
+                                link = f"https://www.ajio.com/search/?text={quote_plus(clean_t)}"
+                            elif "myntra" in s_clean:
+                                link = f"https://www.myntra.com/search?q={quote_plus(clean_t)}"
+                            elif "amazon" in s_clean:
+                                link = f"https://www.amazon.in/s?k={quote_plus(clean_t)}"
+                            elif "flipkart" in s_clean:
+                                link = f"https://www.flipkart.com/search?q={quote_plus(clean_t)}"
+                            else:
+                                link = f"https://www.myntra.com/search?q={quote_plus(clean_t)}"
+                        if title and link and img:
+                            candidates.append({
+                                "title": title,
+                                "url": link,
+                                "image": img,
+                                "price": raw_price,
+                                "seller": seller,
+                            })
+        except Exception as e:
+            logger.debug(f"[CompleteTheLook] Serper Google Shopping query error: {e}")
+
+    # 2. SerpApi Google Shopping (Secondary Engine)
+    if len(candidates) < 4 and serpapi_key:
         try:
             params = {
                 "engine": "google_shopping",
@@ -1022,8 +1077,9 @@ class CompleteTheLookService:
             else:
                 missing_slots.append(slot)
 
-        # ── 3. Adaptive Quality Fallback (ONLY for missing/starved slots) ─────
-        if missing_slots:
+        # ── 3. Adaptive Quality Fallback (ONLY for missing/starved slots when not on Serper) ─────
+        serper_active = bool(getattr(settings, "serper_api_key", None) or os.getenv("SERPER_API_KEY"))
+        if missing_slots and not serper_active:
             logger.info(
                 f"[CompleteTheLook] Adaptive fallback: {len(missing_slots)} slot(s) missing from unified pool. "
                 f"Executing targeted search for: {[s.slot_name for s in missing_slots]}"

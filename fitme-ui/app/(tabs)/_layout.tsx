@@ -149,7 +149,7 @@ function CameraButton({ onPress }: { onPress: () => void }) {
   );
 }
 
-function CustomTabBar({ state, navigation }: any) {
+function CustomTabBar({ state, navigation, descriptors }: any) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
@@ -285,6 +285,13 @@ function CustomTabBar({ state, navigation }: any) {
 
   const bottomOffset = Math.max(insets.bottom, Platform.OS === 'ios' ? 20 : 14);
 
+  const currentRoute = state.routes[state.index];
+  const descriptor = descriptors ? descriptors[currentRoute.key] : null;
+  const tabBarStyle = descriptor?.options?.tabBarStyle;
+  if (tabBarStyle && tabBarStyle.display === 'none') {
+    return null;
+  }
+
   return (
     <>
       {/* Soft background fade so scrolling content smoothly fades behind the floating bar */}
@@ -348,8 +355,13 @@ function CustomTabBar({ state, navigation }: any) {
 export default function TabsLayout() {
   return (
     <Tabs
+      detachInactiveScreens={false}
       tabBar={(props) => <CustomTabBar {...props} />}
-      screenOptions={{ headerShown: false }}
+      screenOptions={{
+        headerShown: false,
+        unmountOnBlur: false,
+        freezeOnBlur: false,
+      }}
     />
   );
 }

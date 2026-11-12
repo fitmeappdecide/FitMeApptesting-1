@@ -7,12 +7,27 @@ import { AppHeader } from '../src/components/AppHeader';
 import { CachedImage } from '../src/components/CachedImage';
 import { historyItems as mockHistoryItems } from '../src/data/mockData';
 import { tryOnApi, TryOnHistoryItem } from '../src/services/api';
+import { useLooksStore } from '../src/services/looksStore';
 import { Colors, Spacing, Radii } from '../src/constants/theme';
 
 export default function History() {
   const router = useRouter();
-  const [items, setItems] = useState<any[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [items, setItems] = useState<any[]>(() => {
+    const cached = useLooksStore.getState().generatedLooks;
+    if (cached && cached.length > 0) {
+      return cached.map((j: TryOnHistoryItem) => ({
+        id: j.id,
+        title: j.title || 'Virtual Try-On Look',
+        brand: j.brand || 'FitMe',
+        date: j.created_at ? new Date(j.created_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Recent',
+        image: (j.result_image_urls && j.result_image_urls[0]) || j.thumbnail_url || 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=800',
+      }));
+    }
+    return [];
+  });
+  const [loading, setLoading] = useState<boolean>(() => {
+    return useLooksStore.getState().generatedLooks.length === 0;
+  });
 
   useEffect(() => {
     loadHistory();
@@ -20,7 +35,7 @@ export default function History() {
 
   const loadHistory = async () => {
     try {
-      setLoading(true);
+      if (items.length === 0) setLoading(true);
       const res = await tryOnApi.getHistory({ status: 'completed' });
       if (res && res.length > 0) {
         setItems(

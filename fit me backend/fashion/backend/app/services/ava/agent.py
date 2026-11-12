@@ -44,6 +44,43 @@ class AVAAgent:
         self.tools = AVAToolSuite(db, user_id)
         self.gpt_orchestrator = AVAGPTOrchestrator(self.tools)
 
+    @staticmethod
+    def _make_thumbnail_base64(image_base64: str, max_dim: int = 400) -> str:
+        """
+        Compress user attached images to a compact ~20KB thumbnail for fast database persistence and loading.
+        Prevents multi-megabyte base64 strings from inflating database and freezing mobile clients.
+        """
+        try:
+            import base64
+            from io import BytesIO
+            from PIL import Image, ImageOps
+
+            raw_b64 = image_base64
+            if "," in raw_b64:
+                raw_b64 = raw_b64.split(",", 1)[1]
+
+            img_bytes = base64.b64decode(raw_b64)
+            img = Image.open(BytesIO(img_bytes))
+
+            try:
+                img = ImageOps.exif_transpose(img)
+            except Exception:
+                pass
+
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+
+            img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+            out_buf = BytesIO()
+            img.save(out_buf, format="JPEG", quality=75, optimize=True)
+            out_b64 = base64.b64encode(out_buf.getvalue()).decode("utf-8")
+            return f"data:image/jpeg;base64,{out_b64}"
+        except Exception as e:
+            logger.warning(f"[AVAAgent] Thumbnail generation notice: {e}")
+            if image_base64.startswith("data:"):
+                return image_base64
+            return f"data:image/jpeg;base64,{image_base64}"
+
     def _analyze_image_deterministic(self, image_base64: str, prompt_text: str) -> Dict[str, Any]:
         """
         Deterministic fashion vision & closet assistant.
@@ -93,6 +130,53 @@ class AVAAgent:
                 "strengths": [f"Timeless {dominant_color} shade", "Easy to dress up or down"],
                 "improvements": ["Pair with contrasting accessories for elevated definition"],
             }
+
+    async def _ensure_conversation(
+        self,
+        conversation_id: Optional[uuid.UUID],
+        user_prompt: str,
+        occasion: Optional[str] = None,
+        platform: Optional[str] = None,
+    ) -> uuid.UUID:
+        from datetime import UTC, datetime
+
+        plat_str = f" · {platform.capitalize()}" if platform else ""
+        low = user_prompt.lower()
+        if "college" in low:
+            title = f"College Outfit{plat_str}"
+        elif "wedding" in low or "ethnic" in low or "shaadi" in low:
+            title = f"Ethnic Wedding Outfit{plat_str}"
+        elif "cheaper" in low:
+            title = f"Budget Optimization{plat_str}"
+        elif "try" in low:
+            title = f"Virtual Try-On{plat_str}"
+        elif occasion and occasion != "casual":
+            title = f"{occasion.capitalize()} Styling{plat_str}"
+        else:
+            words = user_prompt.strip().split()[:7]
+            title = " ".join(words) if words else "Fashion Styling"
+            title = title[0].upper() + title[1:] if title else "Fashion Styling"
+
+        if conversation_id:
+            stmt = select(AVAConversation).where(AVAConversation.id == conversation_id)
+            c_res = await self.db.execute(stmt)
+            existing_conv = c_res.scalar_one_or_none()
+            if existing_conv:
+                existing_conv.updated_at = datetime.now(UTC)
+                await self.db.flush()
+                return existing_conv.id
+            else:
+                # If conversation_id was passed by client but doesn't exist in DB, create it with this ID
+                conv = AVAConversation(id=conversation_id, user_id=self.user_id, title=title)
+                self.db.add(conv)
+                await self.db.flush()
+                return conv.id
+
+        # Generate fresh conversation
+        conv = AVAConversation(user_id=self.user_id, title=title)
+        self.db.add(conv)
+        await self.db.flush()
+        return conv.id
 
     async def process_request(
         self,
@@ -185,45 +269,13 @@ class AVAAgent:
         tool_calls_log.append({"tool": "get_user_profile", "time_ms": int((time.time() - start_time) * 1000), "status": "success"})
 
         style_dna_summary = ""
-        if self.user_id:
-            await AVAMemoryManager.extract_and_update_preferences(self.db, self.user_id, user_prompt)
-            pref_obj = await AVAMemoryManager.get_preferences(self.db, self.user_id)
-            if pref_obj:
-                body_prof = profile.get("body_profile") if profile else None
-                style_dna_summary = AVAMemoryManager.format_style_dna_for_prompt(pref_obj, body_prof)
+        # Style DNA extraction and prompt injection disabled as requested by user
 
         preferences = await self.tools.get_user_preferences()
         tool_calls_log.append({"tool": "get_user_preferences", "time_ms": int((time.time() - start_time) * 1000), "status": "success"})
 
-        # Initialize or touch conversation session
-        if not conversation_id:
-            plat_str = f" · {platform.capitalize()}" if platform else ""
-            low = user_prompt.lower()
-            if "college" in low:
-                title = f"College Outfit{plat_str}"
-            elif "wedding" in low or "ethnic" in low or "shaadi" in low:
-                title = f"Ethnic Wedding Outfit{plat_str}"
-            elif "cheaper" in low:
-                title = f"Budget Optimization{plat_str}"
-            elif "try" in low:
-                title = f"Virtual Try-On{plat_str}"
-            elif occasion and occasion != "casual":
-                title = f"{occasion.capitalize()} Styling{plat_str}"
-            else:
-                words = [w.capitalize() for w in user_prompt.split() if len(w) > 2][:4]
-                title = " ".join(words) if words else "Fashion Styling"
-
-            conv = AVAConversation(user_id=self.user_id, title=title)
-            self.db.add(conv)
-            await self.db.flush()
-            conversation_id = conv.id
-        else:
-            from datetime import UTC, datetime
-            stmt = select(AVAConversation).where(AVAConversation.id == conversation_id)
-            c_res = await self.db.execute(stmt)
-            existing_conv = c_res.scalar_one_or_none()
-            if existing_conv:
-                existing_conv.updated_at = datetime.now(UTC)
+        # Initialize or touch conversation session (guarantees DB foreign key existence)
+        conversation_id = await self._ensure_conversation(conversation_id, user_prompt, occasion, platform)
 
         # GPT-4o Orchestration Hook (when API key is available)
         if settings.openai_api_key:
@@ -244,11 +296,16 @@ class AVAAgent:
                 )
 
                 if "error" not in gpt_res and gpt_res.get("message"):
+                    user_payload = None
+                    if image_base64:
+                        user_payload = {"image_url": self._make_thumbnail_base64(image_base64)}
+
                     user_msg = AVAMessage(
                         conversation_id=conversation_id,
                         sender="user",
                         text_content=user_prompt,
                         intent="gpt_stylist",
+                        structured_payload=user_payload,
                     )
                     self.db.add(user_msg)
 
@@ -535,13 +592,16 @@ class AVAAgent:
                     "• **Footwear**: Pointed or nude footwear elongates the frame effortlessly.\n\n"
                     "Tell me your occasion and I'll curate an outfit tailored to your silhouette!"
                 )
-            elif any(k in low_prompt for k in ["color", "season", "undertone", "palette"]):
+            elif any(k in low_prompt for k in ["skin", "undertone", "complexion", "color season", "palette"]):
                 message_text = (
-                    "🎨 **AVA Color Season Intelligence**:\n\n"
-                    "• **Warm Undertones**: Earthy tones, terracotta, warm olive, mustard, and gold accents.\n"
-                    "• **Cool Undertones**: Jewel tones, emerald, royal blue, crisp white, and silver accents.\n"
-                    "• **Neutral / Versatile**: Navy, charcoal, soft beige, and rich burgundy.\n\n"
-                    "Ask for an outfit in any color and I'll assemble a harmonious palette!"
+                    "🎨 **AVA Skin Tone & Color Harmony Guide**:\n\n"
+                    "To analyze your skin tone and find your signature color palette:\n"
+                    "• **Upload a photo**: Tap the **(+)** button below to share a selfie or wrist photo in natural daylight.\n"
+                    "• **Quick Undertone Self-Check**:\n"
+                    "   - **Warm Undertones**: Veins appear greenish; gold jewelry flatters you best; you tan easily. Flattering colors: warm olive, terracotta, mustard, camel, and cream.\n"
+                    "   - **Cool Undertones**: Veins appear blue or purple; silver jewelry pops; you burn in the sun. Flattering colors: emerald green, cobalt blue, ruby red, and icy pastels.\n"
+                    "   - **Neutral Undertones**: A mix of green and blue veins; both silver and gold look great. Flattering colors: dusty rose, jade green, charcoal, and navy.\n\n"
+                    "Upload a photo or tell me your tone, and I'll prescribe your perfect seasonal palette!"
                 )
             else:
                 message_text = (
@@ -698,16 +758,21 @@ class AVAAgent:
                     f"Here is your curated {occasion_title} Look from {store_name} at ₹{total_outfit_price:,.0f}{savings_note}.\n\n"
                     f"✨ Stylist Note: {theme_note}\n\n"
                     f"💡 Styling Tip: Pair the pieces with clean lines and minimal accessories for an effortless, confident aesthetic.\n\n"
-                    f"Explore each handpicked item below — tap 'View' to shop on {store_name} or 'Try On' to preview the fit on your avatar."
+                    f"Explore each handpicked item below — tap 'View' to shop on {store_name}."
                 )
-                suggested_actions = ["Make it cheaper", "Swap an item", "Try this on me", "Save look"]
+                suggested_actions = []
 
         # Store user message
+        user_payload = None
+        if image_base64:
+            user_payload = {"image_url": self._make_thumbnail_base64(image_base64)}
+
         user_msg = AVAMessage(
             conversation_id=conversation_id,
             sender="user",
             text_content=user_prompt,
             intent=intent,
+            structured_payload=user_payload,
         )
         self.db.add(user_msg)
 
@@ -746,27 +811,15 @@ class AVAAgent:
         Streaming response generator yielding Server-Sent Events (SSE).
         Delivers ChatGPT-style instant first-token typing and real-time outfit delivery.
         """
-        # Ensure conversation exists
-        if not conversation_id:
-            conv = AVAConversation(user_id=self.user_id, title="Fashion Styling Session")
-            self.db.add(conv)
-            await self.db.flush()
-            conversation_id = conv.id
+        # Ensure conversation exists in DB (guarantees DB foreign key existence)
+        conversation_id = await self._ensure_conversation(conversation_id, user_prompt)
 
         yield f"data: {json.dumps({'event': 'start', 'conversation_id': str(conversation_id)})}\n\n"
 
         if settings.openai_api_key:
             profile = await self.tools.get_user_profile()
             style_dna_summary = ""
-            if self.user_id:
-                try:
-                    await AVAMemoryManager.extract_and_update_preferences(self.db, self.user_id, user_prompt)
-                    pref_obj = await AVAMemoryManager.get_preferences(self.db, self.user_id)
-                    if pref_obj:
-                        body_prof = profile.get("body_profile") if profile else None
-                        style_dna_summary = AVAMemoryManager.format_style_dna_for_prompt(pref_obj, body_prof)
-                except Exception as e:
-                    logger.warning(f"[AVAAgent] Memory extraction failed in stream: {e}")
+            # Style DNA extraction and prompt injection disabled as requested by user
 
             conv_history: List[Dict[str, str]] = []
             if conversation_id:
@@ -775,11 +828,16 @@ class AVAAgent:
                     sender_role = "user" if m.get("sender") == "user" else "assistant"
                     conv_history.append({"role": sender_role, "content": m.get("text") or ""})
 
+            user_payload = None
+            if image_base64:
+                user_payload = {"image_url": self._make_thumbnail_base64(image_base64)}
+
             user_msg = AVAMessage(
                 conversation_id=conversation_id,
                 sender="user",
                 text_content=user_prompt,
                 intent="gpt_stream",
+                structured_payload=user_payload,
             )
             self.db.add(user_msg)
             await self.db.flush()
@@ -787,74 +845,104 @@ class AVAAgent:
             full_text_parts = []
             outfits_collected = []
 
-            async for chunk_evt in self.gpt_orchestrator.stream_chat(
-                user_prompt=user_prompt,
-                conversation_history=conv_history,
-                image_base64=image_base64,
-                user_profile=profile,
-                style_dna_summary=style_dna_summary,
-            ):
-                evt_name = chunk_evt.get("event")
-                evt_data = chunk_evt.get("data", {})
+            stream_succeeded = False
+            try:
+                async for chunk_evt in self.gpt_orchestrator.stream_chat(
+                    user_prompt=user_prompt,
+                    conversation_history=conv_history,
+                    image_base64=image_base64,
+                    user_profile=profile,
+                    style_dna_summary=style_dna_summary,
+                ):
+                    evt_name = chunk_evt.get("event")
+                    evt_data = chunk_evt.get("data", {})
 
-                if evt_name == "token":
-                    token_chunk = evt_data.get("chunk", "")
-                    full_text_parts.append(token_chunk)
-                    yield f"data: {json.dumps({'event': 'token', 'chunk': token_chunk})}\n\n"
-                elif evt_name == "status":
-                    yield f"data: {json.dumps({'event': 'status', 'status': evt_data.get('status', '')})}\n\n"
-                elif evt_name == "outfit":
-                    o = evt_data.get("outfit", {})
-                    outfits_collected.append(o)
-                    yield f"data: {json.dumps({'event': 'outfit', 'outfit': o})}\n\n"
-                elif evt_name == "done":
-                    final_msg = "".join(full_text_parts) or evt_data.get("message", "")
-                    done_payload = {
-                        "event": "done",
-                        "conversation_id": str(conversation_id),
-                        "message": final_msg,
-                        "outfits": outfits_collected or evt_data.get("outfits", []),
-                        "suggested_actions": evt_data.get("suggested_actions", ["Try on this look", "Make it cheaper", "Explore more"]),
-                    }
+                    if evt_name == "error":
+                        logger.warning(f"[AVAAgent] stream_chat error: {evt_data}")
+                        break
 
-                    ava_msg = AVAMessage(
-                        conversation_id=conversation_id,
-                        sender="ava",
-                        text_content=final_msg,
-                        intent="gpt_stream",
-                        structured_payload=done_payload,
-                    )
-                    self.db.add(ava_msg)
-                    await self.db.commit()
+                    if evt_name == "token":
+                        token_chunk = evt_data.get("chunk", "")
+                        full_text_parts.append(token_chunk)
+                        yield f"data: {json.dumps({'event': 'token', 'chunk': token_chunk})}\n\n"
+                    elif evt_name == "status":
+                        yield f"data: {json.dumps({'event': 'status', 'status': evt_data.get('status', '')})}\n\n"
+                    elif evt_name == "outfit":
+                        o = evt_data.get("outfit", {})
+                        outfits_collected.append(o)
+                        yield f"data: {json.dumps({'event': 'outfit', 'outfit': o})}\n\n"
+                    elif evt_name == "done":
+                        final_msg = "".join(full_text_parts) or evt_data.get("message", "")
+                        if final_msg.strip():
+                            stream_succeeded = True
+                            done_payload = {
+                                "event": "done",
+                                "conversation_id": str(conversation_id),
+                                "message": final_msg,
+                                "outfits": outfits_collected or evt_data.get("outfits", []),
+                                "suggested_actions": evt_data.get("suggested_actions", []),
+                            }
 
-                    yield f"data: {json.dumps(done_payload)}\n\n"
-                    return
+                            ava_msg = AVAMessage(
+                                conversation_id=conversation_id,
+                                sender="ava",
+                                text_content=final_msg,
+                                intent="gpt_stream",
+                                structured_payload=done_payload,
+                            )
+                            self.db.add(ava_msg)
+                            await self.db.commit()
 
-        else:
-            # Fallback to deterministic process_request with rapid word streaming (ChatGPT effect)
-            res = await self.process_request(
-                user_prompt=user_prompt,
+                            yield f"data: {json.dumps(done_payload)}\n\n"
+                            return
+            except Exception as stream_err:
+                logger.warning(f"[AVAAgent] stream_chat error: {stream_err}")
+
+            if stream_succeeded:
+                return
+
+            logger.info("[AVAAgent] Falling back to deterministic styling engine with word streaming")
+
+        # Fallback to deterministic process_request with rapid word streaming (ChatGPT effect)
+        res = await self.process_request(
+            user_prompt=user_prompt,
+            conversation_id=conversation_id,
+            image_base64=image_base64,
+            selected_outfit=selected_outfit,
+        )
+
+        text = res.get("message", "")
+        if not text:
+            text = "Here are curated pieces styled especially for you based on our live catalog."
+        words = text.split(" ")
+        for i, word in enumerate(words):
+            chunk = word + (" " if i < len(words) - 1 else "")
+            yield f"data: {json.dumps({'event': 'token', 'chunk': chunk})}\n\n"
+            await asyncio.sleep(0.015)
+
+        for outfit in res.get("outfits", []):
+            yield f"data: {json.dumps({'event': 'outfit', 'outfit': outfit})}\n\n"
+
+        done_payload = {
+            "event": "done",
+            "conversation_id": str(conversation_id),
+            "message": text,
+            "outfits": res.get("outfits", []),
+            "suggested_actions": res.get("suggested_actions", []),
+        }
+
+        try:
+            ava_msg = AVAMessage(
                 conversation_id=conversation_id,
-                image_base64=image_base64,
-                selected_outfit=selected_outfit,
+                sender="ava",
+                text_content=text,
+                intent="stylist_fallback",
+                structured_payload=done_payload,
             )
+            self.db.add(ava_msg)
+            await self.db.commit()
+        except Exception as persist_err:
+            logger.debug(f"[AVAAgent] Fallback persistence notice: {persist_err}")
 
-            text = res.get("message", "")
-            words = text.split(" ")
-            for i, word in enumerate(words):
-                chunk = word + (" " if i < len(words) - 1 else "")
-                yield f"data: {json.dumps({'event': 'token', 'chunk': chunk})}\n\n"
-                await asyncio.sleep(0.015)
-
-            for outfit in res.get("outfits", []):
-                yield f"data: {json.dumps({'event': 'outfit', 'outfit': outfit})}\n\n"
-
-            done_payload = {
-                "event": "done",
-                "conversation_id": str(conversation_id),
-                "message": text,
-                "outfits": res.get("outfits", []),
-                "suggested_actions": res.get("suggested_actions", []),
-            }
-            yield f"data: {json.dumps(done_payload)}\n\n"
+        yield f"data: {json.dumps(done_payload)}\n\n"
 

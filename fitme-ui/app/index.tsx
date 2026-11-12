@@ -1,9 +1,8 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logo } from '../src/components/Logo';
-import { Colors, Spacing } from '../src/constants/theme';
+import { Colors } from '../src/constants/theme';
 import { loadStoredAuth, getAuthenticatedUserId } from '../src/services/api';
 import { initializeUserSession } from '../src/services/sessionManager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -49,7 +48,7 @@ export default function SplashScreen() {
   }, []);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
         <Logo size={48} />
         <Text style={styles.subtitle}>AI VIRTUAL TRY-ON</Text>
@@ -69,7 +68,7 @@ export default function SplashScreen() {
           />
         </View>
       </Animated.View>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -82,13 +81,12 @@ const styles = StyleSheet.create({
   },
   content: {
     alignItems: 'center',
-    gap: Spacing.lg,
   },
   subtitle: {
     fontSize: 11,
     letterSpacing: 4,
     color: Colors.mutedForeground,
-    marginTop: Spacing.sm,
+    marginTop: 6,
   },
   loaderTrack: {
     width: 120,
@@ -96,7 +94,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.muted,
     borderRadius: 1,
     overflow: 'hidden',
-    marginTop: Spacing.lg,
+    marginTop: 16,
   },
   loaderBar: {
     width: 40,

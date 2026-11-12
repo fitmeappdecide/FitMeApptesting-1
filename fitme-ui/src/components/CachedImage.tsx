@@ -32,15 +32,44 @@ function getCacheFilename(uri: string): string {
   return `cached_${Math.abs(hash)}.${ext}`;
 }
 
+function getCleanUrlKey(uri: string): string {
+  return uri ? uri.split('?')[0] : '';
+}
+
 const memoryCache = new Map<string, string>();
 const MAX_MEMORY_CACHE = 200;
 
 function setMemoryCache(key: string, path: string) {
+  const cleanKey = getCleanUrlKey(key);
   if (memoryCache.size >= MAX_MEMORY_CACHE) {
     const oldestKey = memoryCache.keys().next().value;
     if (oldestKey) memoryCache.delete(oldestKey);
   }
-  memoryCache.set(key, path);
+  memoryCache.set(cleanKey, path);
+}
+
+/** Pre-downloads an image into disk cache & memory cache in background */
+export async function prefetchCachedImage(uri: string): Promise<string | null> {
+  if (!uri || uri.startsWith('file://') || uri.startsWith('data:')) return uri || null;
+  const cleanKey = getCleanUrlKey(uri);
+  if (memoryCache.has(cleanKey)) return memoryCache.get(cleanKey)!;
+
+  try {
+    await ensureDirExists();
+    const filename = getCacheFilename(uri);
+    const localPath = `${CACHE_FOLDER}${filename}`;
+    const fileInfo = await FileSystem.getInfoAsync(localPath);
+    if (fileInfo.exists && fileInfo.size !== undefined && fileInfo.size >= 500) {
+      setMemoryCache(cleanKey, localPath);
+      return localPath;
+    }
+    const downloadRes = await FileSystem.downloadAsync(uri, localPath);
+    if (downloadRes?.status === 200 && downloadRes?.uri) {
+      setMemoryCache(cleanKey, downloadRes.uri);
+      return downloadRes.uri;
+    }
+  } catch (_) {}
+  return null;
 }
 
 export interface CachedImageProps extends Omit<ImageProps, 'source'> {
@@ -63,10 +92,12 @@ export function CachedImage({
     uri.startsWith('data:')
   );
 
+  const cleanKey = uri ? getCleanUrlKey(uri) : '';
+
   const [localUri, setLocalUri] = useState<string | null>(() => {
     if (!uri) return null;
     if (isLocal) return uri;
-    return memoryCache.get(uri) || uri;
+    return memoryCache.get(cleanKey) || uri;
   });
 
   useEffect(() => {
@@ -83,8 +114,8 @@ export function CachedImage({
       return;
     }
 
-    if (memoryCache.has(uri)) {
-      setLocalUri(memoryCache.get(uri)!);
+    if (memoryCache.has(cleanKey)) {
+      setLocalUri(memoryCache.get(cleanKey)!);
       return;
     }
 
@@ -102,9 +133,9 @@ export function CachedImage({
           // Heuristic check for known old corrupted HTTP error files (< 500 bytes)
           if (fileInfo.size !== undefined && fileInfo.size < 500) {
             await FileSystem.deleteAsync(localPath, { idempotent: true });
-            memoryCache.delete(uri!);
+            memoryCache.delete(cleanKey);
           } else {
-            setMemoryCache(uri!, localPath);
+            setMemoryCache(cleanKey, localPath);
             if (isMounted) setLocalUri(localPath);
             return;
           }
@@ -114,12 +145,12 @@ export function CachedImage({
         const downloadRes = await FileSystem.downloadAsync(uri!, localPath);
         // Only cache HTTP 200 responses
         if (downloadRes?.status === 200 && downloadRes?.uri) {
-          setMemoryCache(uri!, downloadRes.uri);
+          setMemoryCache(cleanKey, downloadRes.uri);
           if (isMounted) setLocalUri(downloadRes.uri);
         } else {
           // Immediately reject and delete non-200 responses
           await FileSystem.deleteAsync(localPath, { idempotent: true });
-          memoryCache.delete(uri!);
+          memoryCache.delete(cleanKey);
         }
       } catch (err) {
         // Direct network URI is already displayed, ignore background cache failure
@@ -131,7 +162,7 @@ export function CachedImage({
     return () => {
       isMounted = false;
     };
-  }, [uri]);
+  }, [uri, cleanKey]);
 
   const [hasError, setHasError] = useState(false);
   const hasRetriedRef = React.useRef(false);
@@ -142,7 +173,7 @@ export function CachedImage({
   }, [uri]);
 
   if (source) {
-    return <Image source={source} style={style} {...props} />;
+    return <Image source={source} style={style} fadeDuration={0} {...props} />;
   }
 
   if (!localUri || hasError) {
@@ -153,11 +184,12 @@ export function CachedImage({
     <Image
       source={{ uri: localUri }}
       style={style}
+      fadeDuration={0}
       onError={() => {
         // Evict corrupted cached file & retry network URL AT MOST ONCE to prevent infinite loops
         if (localUri && (localUri.startsWith(CACHE_FOLDER) || localUri.startsWith('file://'))) {
           FileSystem.deleteAsync(localUri, { idempotent: true }).catch(() => {});
-          if (uri) memoryCache.delete(uri);
+          if (cleanKey) memoryCache.delete(cleanKey);
 
           if (uri && uri !== localUri && !uri.startsWith('file://') && !hasRetriedRef.current) {
             hasRetriedRef.current = true;

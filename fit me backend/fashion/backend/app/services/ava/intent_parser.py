@@ -129,13 +129,14 @@ class AVAIntentParser:
             intent = "style_recent_tryon"
             needs_products = True
 
-        # Priority 3: Conversational Fashion Advice / Style Tips / Questions
+        # Priority 3: Conversational Fashion Advice / Style Tips / Questions / Skin Tone
         elif (
             any(k in text for k in [
                 "who are you", "what can you do", "what are you", "help me", "how does tryon work",
                 "how does virtual try on work", "how do you work", "how to style", "styling tips",
                 "fashion tips", "fashion advice", "what should i wear", "body shape", "color season",
-                "how should i dress", "how do i dress", "what suits", "guide me", "style advice"
+                "color analysis", "skin tone", "skin", "undertone", "complexion", "color palette",
+                "analyse my skin", "analyze my skin", "how should i dress", "how do i dress", "what suits", "guide me", "style advice"
             ])
             or (text in ["hi", "hello", "hey", "hola", "namaste", "good morning", "good evening", "what's up", "help"])
         ) and not (bool(re.search(r'\b(?:under|rs\.?|inr|below|budget|buy|shop)\b', text)) or '₹' in text):

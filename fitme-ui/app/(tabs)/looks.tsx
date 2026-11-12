@@ -135,7 +135,9 @@ const LookCard = React.memo(function LookCard({
           initialBrand: item.brand || '',
           initialPlatform: item.platform || '',
           initialResultUrl: item.result_image_urls?.[0] || item.thumbnail_url || imageUrl || '',
-          initialGarmentUrl: item.garment_image_url || item.thumbnail_url || item.result_image_urls?.[0] || imageUrl || '',
+          initialGarmentUrl: item.garment_image_url || '',
+          initialPrice: item.price !== null && item.price !== undefined ? String(item.price) : '',
+          initialProductUrl: item.product_url || '',
         },
       } as any}
       asChild

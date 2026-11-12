@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import api_error, get_current_user
 from app.core.database import get_db
+from app.core.limiter import limiter
 from app.core.security import create_access_token, create_refresh_token, decode_token, hash_password, verify_password
 from app.models.user import User
 import secrets
@@ -14,7 +15,8 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)) -> TokenResponse:
+@limiter.limit("5/minute")
+async def register(request: Request, payload: UserCreate, db: AsyncSession = Depends(get_db)) -> TokenResponse:
     existing = await db.execute(select(User).where(User.email == payload.email.lower()))
     if existing.scalar_one_or_none() is not None:
         raise api_error(400, "EMAIL_EXISTS", "This email is already registered.", "यह ईमेल पहले से पंजीकृत है।")
@@ -26,7 +28,8 @@ async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)) -> T
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
+@limiter.limit("10/minute")
+async def login(request: Request, payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
     result = await db.execute(select(User).where(User.email == payload.email.lower()))
     user = result.scalar_one_or_none()
     if user is None or not verify_password(payload.password, user.password_hash):
@@ -39,20 +42,16 @@ from datetime import UTC, datetime
 
 @router.post("/firebase", response_model=TokenResponse)
 async def login_firebase(payload: FirebaseLoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
-    print("========== FIREBASE LOGIN ==========")
-    print("payload.token =", payload.token)
-    print("payload.token length =", len(payload.token) if payload.token else 0)
+    token_len = len(payload.token) if payload.token else 0
+    print(f"========== FIREBASE LOGIN (token length: {token_len}) ==========")
     try:
         decoded = verify_token(payload.token)
-        print("Decoded Firebase Token:")
-        print(decoded)
     except Exception as e:
         import traceback
         print("========== VERIFY TOKEN FAILED ==========")
         print(type(e).__name__)
-        print(str(e))
         traceback.print_exc()
-        raise api_error(400, "INVALID_TOKEN", f"Google/Firebase authentication failed: {str(e)}", "गूगल/फायरबेस प्रमाणीकरण विफल रहा।")
+        raise api_error(400, "INVALID_TOKEN", "Google/Firebase authentication failed.", "गूगल/फायरबेस प्रमाणीकरण विफल रहा।")
 
     
     uid = decoded.get("uid")
