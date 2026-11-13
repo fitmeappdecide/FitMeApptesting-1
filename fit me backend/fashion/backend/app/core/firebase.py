@@ -46,17 +46,38 @@ def init_firebase():
 import jwt
 
 def verify_token(token: str) -> dict:
+    # 1. Try Firebase Admin ID Token verification (for Firebase Auth minted tokens)
     try:
         decoded_token = auth.verify_id_token(token)
         return decoded_token
     except Exception as e:
+        # 2. Cryptographically verify Google OAuth ID Tokens (e.g. Android Google Sign-In SDK)
+        # using Google's official public certificate endpoint
+        try:
+            from google.oauth2 import id_token as google_id_token
+            from google.auth.transport import requests as google_requests
+
+            google_claims = google_id_token.verify_oauth2_token(
+                token,
+                google_requests.Request(),
+            )
+            if google_claims and ("email" in google_claims or "sub" in google_claims):
+                email = google_claims.get("email") or f"user_{google_claims.get('sub', '')[:8]}@example.com"
+                return {
+                    "uid": google_claims.get("sub"),
+                    "email": email,
+                    "name": google_claims.get("name") or google_claims.get("given_name") or email.split("@")[0],
+                }
+        except Exception as google_err:
+            logger.debug(f"Google OAuth verify_oauth2_token notice: {google_err}")
+
         if settings.is_production:
-            logger.error(f"Firebase Admin verify_id_token failed in production: {e}")
+            logger.error(f"Firebase/Google token verification failed in production: {e}")
             raise ValueError(f"Invalid Firebase/Google ID token: {e}")
 
         logger.warning(f"Firebase Admin verify_id_token failed ({e}). Trying dev Google OAuth JWT payload decode.")
         try:
-            # Development-only fallback for Google OAuth ID Tokens or local testing tokens
+            # Development-only fallback for local testing tokens
             unverified = jwt.decode(token, options={"verify_signature": False})
             if "email" in unverified or "sub" in unverified:
                 email = unverified.get("email") or f"user_{unverified.get('sub', 'dev')[:8]}@example.com"
