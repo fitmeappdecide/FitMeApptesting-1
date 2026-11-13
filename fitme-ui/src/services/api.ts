@@ -698,8 +698,7 @@ export const tryOnApi = {
     if (params?.page) queryParts.push(`page=${params.page}`);
     const qs = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
     return request<TryOnHistoryItem[]>(`/api/v1/tryon/history${qs}`, {
-      timeoutMs: 6_000,
-      silentTimeout: true,
+      timeoutMs: 15_000,
       ...options,
     });
   },

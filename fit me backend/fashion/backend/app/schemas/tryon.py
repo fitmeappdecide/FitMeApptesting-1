@@ -39,9 +39,12 @@ class TryOnResultResponse(BaseModel):
     processing_time_seconds: float | None
 
 
+from typing import Any, Union
+
+
 class TryOnHistoryItem(BaseModel):
     id: uuid.UUID
-    garment_id: uuid.UUID
+    garment_id: uuid.UUID | None = None
     status: str
     result_image_urls: list[str]
     thumbnail_url: str | None = None
@@ -54,7 +57,7 @@ class TryOnHistoryItem(BaseModel):
     platform: str | None = None
     garment_image_url: str | None = None
     product_url: str | None = None
-    price: float | None = None
+    price: Union[str, float, None] = None
 
     model_config = {"from_attributes": True}
 
@@ -73,7 +76,7 @@ class TryOnDeleteResponse(BaseModel):
 class TryOnDetailResponse(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
-    garment_id: uuid.UUID
+    garment_id: uuid.UUID | None = None
     status: str
     result_image_urls: list[str]
     is_saved: bool = False
@@ -89,9 +92,9 @@ class TryOnDetailResponse(BaseModel):
     product_url: str | None = None
     affiliate_url: str | None = None
     garment_image_url: str | None = None
-    garment_images: list[dict] = []
+    garment_images: list[Any] = []
     garment_type: str | None = None
-    price: str | None = None
+    price: Union[str, float, None] = None
 
     # Size Recommendation & Analysis
     size_recommendation: dict | None = None

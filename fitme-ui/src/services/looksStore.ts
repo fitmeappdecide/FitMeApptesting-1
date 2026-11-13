@@ -152,9 +152,10 @@ export const useLooksStore = create<LooksState>()(
         // 1. Local SQLite Read First: Hydrate immediately if database is active (0ms UI latency)
         try {
           if (DatabaseManager.getActiveUserId() === activeUserId) {
+            // Read up to 100 locally cached looks to show complete history immediately
             const [localGen, localSaved] = await Promise.all([
-              LooksRepository.getGeneratedLooks(20, 0),
-              LooksRepository.getSavedLooks(20, 0),
+              LooksRepository.getGeneratedLooks(100, 0),
+              LooksRepository.getSavedLooks(100, 0),
             ]);
             const currentGenMap = new Map(get().generatedLooks.map((item) => [item.id, item]));
             const currentSavedMap = new Map(get().savedLooks.map((item) => [item.id, item]));
@@ -197,6 +198,13 @@ export const useLooksStore = create<LooksState>()(
         if (forceRefresh) {
           set({ refreshing: true });
         }
+
+        // Safety watchdog: ensure loading spinner is unconditionally cleared after max 4 seconds
+        setTimeout(() => {
+          if (get().loading) {
+            set({ loading: false });
+          }
+        }, 4000);
 
         inFlightTargetUserId = activeUserId;
         inFlightFetchLooks = (async () => {
@@ -260,23 +268,34 @@ export const useLooksStore = create<LooksState>()(
 
             // Update Zustand store
             if (Array.isArray(genRes)) {
+              const currentGen = get().generatedLooks;
+              const serverIds = new Set(genRes.map((i) => i.id));
+              // Merge server page 1 with any existing items beyond page 1
+              const remaining = currentGen.filter((i) => !serverIds.has(i.id));
+              const mergedGen = [...genRes, ...remaining];
+
               set({
                 cachedUserId: activeUserId,
-                generatedLooks: genRes,
-                generatedPage: 1,
+                generatedLooks: mergedGen,
+                generatedPage: Math.max(1, Math.ceil(mergedGen.length / 20)),
                 generatedHasMore: genRes.length >= 20,
                 generatedLoadingMore: false,
               });
               AsyncStorage.setItem(
                 'fitme_home_recent_tryons',
-                JSON.stringify(genRes.slice(0, 8))
+                JSON.stringify(mergedGen.slice(0, 8))
               ).catch(() => {});
             }
             if (Array.isArray(savedRes)) {
+              const currentSaved = get().savedLooks;
+              const serverIds = new Set(savedRes.map((i) => i.id));
+              const remaining = currentSaved.filter((i) => !serverIds.has(i.id));
+              const mergedSaved = [...savedRes, ...remaining];
+
               set({
                 cachedUserId: activeUserId,
-                savedLooks: savedRes,
-                savedPage: 1,
+                savedLooks: mergedSaved,
+                savedPage: Math.max(1, Math.ceil(mergedSaved.length / 20)),
                 savedHasMore: savedRes.length >= 20,
                 savedLoadingMore: false,
               });
@@ -312,6 +331,28 @@ export const useLooksStore = create<LooksState>()(
           const nextPage = generatedPage + 1;
 
           try {
+            // Check local SQLite first for next batch
+            if (DatabaseManager.getActiveUserId() === activeUserId) {
+              const localNext = await LooksRepository.getGeneratedLooks(20, (nextPage - 1) * 20);
+              if (localNext.length > 0) {
+                const currentGenMap = new Map(get().generatedLooks.map((item) => [item.id, item]));
+                const mappedNext = localNext.map((job) =>
+                  mapLocalJobToHistoryItem(job, currentGenMap.get(job.server_id || job.local_id))
+                );
+                const currentItems = get().generatedLooks;
+                const existingIds = new Set(currentItems.map((i) => i.id));
+                const newUniqueLocal = mappedNext.filter((i) => !existingIds.has(i.id));
+                if (newUniqueLocal.length > 0) {
+                  set({
+                    generatedLooks: [...currentItems, ...newUniqueLocal],
+                    generatedPage: nextPage,
+                    generatedHasMore: true,
+                    generatedLoadingMore: false,
+                  });
+                }
+              }
+            }
+
             const res = await tryOnApi.getHistory({
               status: 'completed',
               saved_only: false,
@@ -344,10 +385,11 @@ export const useLooksStore = create<LooksState>()(
                 generatedLoadingMore: false,
               });
             } else {
-              set({ generatedHasMore: false, generatedLoadingMore: false });
+              // Network error or invalid payload: keep hasMore true so user can retry scrolling
+              set({ generatedLoadingMore: false });
             }
           } catch (err) {
-            console.warn('Failed to fetch next page of generated looks:', err);
+            console.warn('Notice fetching next page of generated looks:', err);
             set({ generatedLoadingMore: false });
           }
         } else {
@@ -359,6 +401,28 @@ export const useLooksStore = create<LooksState>()(
           const nextPage = savedPage + 1;
 
           try {
+            // Check local SQLite first for next batch
+            if (DatabaseManager.getActiveUserId() === activeUserId) {
+              const localNext = await LooksRepository.getSavedLooks(20, (nextPage - 1) * 20);
+              if (localNext.length > 0) {
+                const currentSavedMap = new Map(get().savedLooks.map((item) => [item.id, item]));
+                const mappedNext = localNext.map((job) =>
+                  mapLocalJobToHistoryItem(job, currentSavedMap.get(job.server_id || job.local_id))
+                );
+                const currentItems = get().savedLooks;
+                const existingIds = new Set(currentItems.map((i) => i.id));
+                const newUniqueLocal = mappedNext.filter((i) => !existingIds.has(i.id));
+                if (newUniqueLocal.length > 0) {
+                  set({
+                    savedLooks: [...currentItems, ...newUniqueLocal],
+                    savedPage: nextPage,
+                    savedHasMore: true,
+                    savedLoadingMore: false,
+                  });
+                }
+              }
+            }
+
             const res = await tryOnApi.getHistory({
               status: 'completed',
               saved_only: true,
@@ -391,10 +455,10 @@ export const useLooksStore = create<LooksState>()(
                 savedLoadingMore: false,
               });
             } else {
-              set({ savedHasMore: false, savedLoadingMore: false });
+              set({ savedLoadingMore: false });
             }
           } catch (err) {
-            console.warn('Failed to fetch next page of saved looks:', err);
+            console.warn('Notice fetching next page of saved looks:', err);
             set({ savedLoadingMore: false });
           }
         }

@@ -237,6 +237,17 @@ class SyncManagerService {
         } else {
           page += 1;
         }
+
+        // Instant Page-1 UI Hydration: display looks immediately without waiting for remaining pages
+        if (page === 2 && totalSynced > 0) {
+          const [localGen, localSaved] = await Promise.all([
+            LooksRepository.getGeneratedLooks(20, 0),
+            LooksRepository.getSavedLooks(20, 0),
+          ]);
+          const mappedGen = localGen.map(mapLocalJobToHistoryItem);
+          const mappedSaved = localSaved.map(mapLocalJobToHistoryItem);
+          useLooksStore.getState().hydrateFromLocalLooks(mappedGen, mappedSaved, userId);
+        }
       } else {
         hasMore = false;
       }

@@ -620,7 +620,7 @@ def sign_if_private(url_or_ref: str, expires_in: int = 7200) -> str:
 
 
 def get_thumbnail_url_for_result(result_url: str) -> str:
-    """Returns the thumbnail URL for a Try-On result, or falls back to result_url."""
+    """Returns the thumbnail URL for a Try-On result, or falls back cleanly to result_url."""
     if not result_url:
         return ""
     if "/tryon_results/" in result_url:
@@ -631,7 +631,7 @@ def get_thumbnail_url_for_result(result_url: str) -> str:
             signed_thumb = create_signed_photo_url(thumb_path)
             if signed_thumb:
                 return signed_thumb
-            return f"{parts[0]}/tryon_results/thumb_{filename}"
+            return sign_if_private(result_url)
     elif result_url.startswith("tryon_results/"):
         filename = result_url[len("tryon_results/") :].split("?")[0]
         if not filename.startswith("thumb_") and (filename.endswith(".webp") or filename.endswith(".jpg")):
@@ -639,8 +639,118 @@ def get_thumbnail_url_for_result(result_url: str) -> str:
             signed_thumb = create_signed_photo_url(thumb_path)
             if signed_thumb:
                 return signed_thumb
-            return thumb_path
+            return sign_if_private(result_url)
     return sign_if_private(result_url)
+
+
+def create_signed_photo_urls_batch(storage_paths: list[str], expires_in: int = 7200) -> dict[str, str]:
+    """Generates signed URLs for a batch of private storage paths in a single HTTP request.
+    Non-private URLs (external CDNs, data URIs) are returned untouched.
+    Cached URLs are resolved instantly from memory.
+    """
+    if not storage_paths:
+        return {}
+
+    now = time.time()
+    bucket_name = settings.supabase_storage_bucket
+    public_prefix = f"/storage/v1/object/public/{bucket_name}/"
+    sign_prefix = f"/storage/v1/object/sign/{bucket_name}/"
+
+    results: dict[str, str] = {}
+    paths_to_query: list[str] = []
+    clean_to_original: dict[str, list[str]] = {}
+
+    for original_url in storage_paths:
+        if not original_url or not isinstance(original_url, str):
+            results[original_url] = ""
+            continue
+        if original_url.startswith("data:"):
+            results[original_url] = original_url
+            continue
+
+        clean_path = original_url
+        is_private = False
+
+        if public_prefix in clean_path:
+            clean_path = clean_path.split(public_prefix, 1)[1]
+            is_private = True
+        elif sign_prefix in clean_path:
+            clean_path = clean_path.split(sign_prefix, 1)[1]
+            is_private = True
+        elif f"/{bucket_name}/" in clean_path:
+            clean_path = clean_path.split(f"/{bucket_name}/", 1)[1]
+            is_private = True
+        elif (
+            clean_path.startswith("tryon_results/")
+            or clean_path.startswith("scans/")
+            or clean_path.startswith("user_photos/")
+            or clean_path.startswith("garments/")
+            or clean_path.startswith("pi_scans/")
+        ):
+            is_private = True
+        elif clean_path.startswith(f"{bucket_name}/"):
+            clean_path = clean_path[len(bucket_name) + 1 :]
+            is_private = True
+
+        clean_path = clean_path.split("?")[0]
+        if clean_path.startswith(f"{bucket_name}/"):
+            clean_path = clean_path[len(bucket_name) + 1 :]
+
+        if not is_private:
+            results[original_url] = original_url
+            continue
+
+        # Check in-memory cache
+        if clean_path in _signed_url_cache:
+            cached_url, exp_time = _signed_url_cache[clean_path]
+            if exp_time - now > 600:
+                results[original_url] = cached_url
+                continue
+
+        clean_to_original.setdefault(clean_path, []).append(original_url)
+        if clean_path not in paths_to_query:
+            paths_to_query.append(clean_path)
+
+    if not paths_to_query:
+        return results
+
+    if not settings.supabase_url or not settings.supabase_service_key:
+        for p in paths_to_query:
+            for orig in clean_to_original.get(p, []):
+                results[orig] = orig
+        return results
+
+    try:
+        client = _get_supabase_client()
+        bucket = client.storage.from_(bucket_name)
+        # Use direct batch signing request to handle 404s safely without client crash
+        res = bucket._request(
+            "POST",
+            f"/object/sign/{bucket_name}",
+            json={"paths": paths_to_query, "expiresIn": str(expires_in)},
+        )
+        if res.status_code == 200:
+            data = res.json()
+            for item in data:
+                c_path = item.get("path")
+                signed_rel = item.get("signedURL")
+                orig_list = clean_to_original.get(c_path, [])
+                if signed_rel:
+                    signed_full = f"{settings.supabase_url}/storage/v1{signed_rel}" if signed_rel.startswith("/") else signed_rel
+                    _signed_url_cache[c_path] = (signed_full, now + expires_in)
+                    for orig in orig_list:
+                        results[orig] = signed_full
+                else:
+                    for orig in orig_list:
+                        results[orig] = ""
+    except Exception as exc:
+        print(f"Notice: Batch signed URL error ({exc}), falling back to individual cache")
+        for p in paths_to_query:
+            for orig in clean_to_original.get(p, []):
+                if orig not in results:
+                    results[orig] = sign_if_private(orig, expires_in=expires_in)
+
+    return results
 
 
 

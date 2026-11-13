@@ -74,13 +74,24 @@ async def convert_candidate_to_garment(
         else:
             size_chart[sz] = vals
 
+    masks = dict(analysis["segmentation_masks"] or {})
+    meta: Dict[str, Any] = {}
+    if candidate.get("price"):
+        meta["price"] = str(candidate["price"]).strip()
+    if candidate.get("brand"):
+        meta["brand"] = str(candidate["brand"]).strip()
+    if candidate.get("platform") or candidate.get("retailer"):
+        meta["platform"] = str(candidate.get("platform") or candidate.get("retailer")).strip()
+    if meta:
+        masks["extracted_metadata"] = meta
+
     garment = Garment(
         brand_id=brand_id,
         product_name=title,
         product_url=url,
         images=normalized_images,
         garment_type=analysis["garment_type"],
-        segmentation_masks=analysis["segmentation_masks"],
+        segmentation_masks=masks,
         fabric_type=analysis["fabric_type"],
         dominant_colours=analysis["dominant_colours"],
         size_chart=size_chart,

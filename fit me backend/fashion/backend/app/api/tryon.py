@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 import re
 import time
@@ -558,6 +559,47 @@ async def history(
         for b in bres.scalars().all():
             brands_map[b.id] = b
 
+    # Collect all image references for high-speed batch signing in a worker thread
+    all_paths_to_sign: list[str] = []
+    job_garment_map: dict[uuid.UUID, str | None] = {}
+    job_thumb_map: dict[uuid.UUID, str | None] = {}
+
+    for j in jobs:
+        first_url = j.result_image_urls[0] if (j.result_image_urls and len(j.result_image_urls) > 0) else None
+        if first_url:
+            all_paths_to_sign.append(first_url)
+            if "/tryon_results/" in first_url:
+                parts = first_url.rsplit("/tryon_results/", 1)
+                fn = parts[1].split("?")[0]
+                if not fn.startswith("thumb_") and (fn.endswith(".webp") or fn.endswith(".jpg")):
+                    t_path = f"tryon_results/thumb_{fn}"
+                    all_paths_to_sign.append(t_path)
+                    job_thumb_map[j.id] = t_path
+            elif first_url.startswith("tryon_results/"):
+                fn = first_url[len("tryon_results/") :].split("?")[0]
+                if not fn.startswith("thumb_") and (fn.endswith(".webp") or fn.endswith(".jpg")):
+                    t_path = f"tryon_results/thumb_{fn}"
+                    all_paths_to_sign.append(t_path)
+                    job_thumb_map[j.id] = t_path
+
+        for u in (j.result_image_urls or []):
+            if u:
+                all_paths_to_sign.append(u)
+
+        garment = garments_map.get(j.garment_id) if j.garment_id else None
+        g_url = None
+        if garment and isinstance(garment.images, list) and len(garment.images) > 0:
+            first_g = garment.images[0]
+            if isinstance(first_g, dict) and "url" in first_g:
+                g_url = first_g["url"]
+            elif isinstance(first_g, str):
+                g_url = first_g
+        if g_url:
+            all_paths_to_sign.append(g_url)
+            job_garment_map[j.id] = g_url
+
+    signed_map = await asyncio.to_thread(storage_service.create_signed_photo_urls_batch, all_paths_to_sign)
+
     for j in jobs:
         garment = garments_map.get(j.garment_id) if j.garment_id else None
         brand = brands_map.get(j.brand_id) if j.brand_id else None
@@ -583,18 +625,28 @@ async def history(
         if not plat:
             plat = "Store"
 
-        first_url = j.result_image_urls[0] if (j.result_image_urls and len(j.result_image_urls) > 0) else None
-        thumb_url = storage_service.get_thumbnail_url_for_result(first_url) if first_url else None
-        signed_image_urls = [storage_service.sign_if_private(u) for u in (j.result_image_urls or [])]
+        price_val = None
+        if garment and isinstance(garment.segmentation_masks, dict):
+            meta = garment.segmentation_masks.get("extracted_metadata")
+            if isinstance(meta, dict):
+                price_val = meta.get("price")
+                if (not brand_name or brand_name == "FitMe") and meta.get("brand"):
+                    brand_name = meta["brand"]
+                if (not plat or plat == "Store") and meta.get("platform"):
+                    plat = meta["platform"]
 
-        garment_img_url = None
-        if garment and isinstance(garment.images, list) and len(garment.images) > 0:
-            first_g = garment.images[0]
-            if isinstance(first_g, dict) and "url" in first_g:
-                garment_img_url = first_g["url"]
-            elif isinstance(first_g, str):
-                garment_img_url = first_g
-        signed_garment_img = storage_service.sign_if_private(garment_img_url) if garment_img_url else None
+        first_url = j.result_image_urls[0] if (j.result_image_urls and len(j.result_image_urls) > 0) else None
+        thumb_path = job_thumb_map.get(j.id)
+        thumb_url = None
+        if thumb_path and signed_map.get(thumb_path):
+            thumb_url = signed_map[thumb_path]
+        elif first_url:
+            thumb_url = signed_map.get(first_url) or storage_service.sign_if_private(first_url)
+
+        signed_image_urls = [signed_map.get(u) or storage_service.sign_if_private(u) for u in (j.result_image_urls or [])]
+
+        garment_img_raw = job_garment_map.get(j.id)
+        signed_garment_img = (signed_map.get(garment_img_raw) or storage_service.sign_if_private(garment_img_raw)) if garment_img_raw else None
         prod_url = garment.product_url or garment.scraped_from_url if garment else None
 
         items.append(
@@ -613,6 +665,7 @@ async def history(
                 platform=plat,
                 garment_image_url=signed_garment_img,
                 product_url=prod_url,
+                price=price_val,
             )
         )
     return items
@@ -819,6 +872,17 @@ async def get_tryon_detail(
     if not platform:
         platform = "Store"
 
+    # Extract metadata from garment segmentation masks if available
+    price_val = None
+    if garment and isinstance(garment.segmentation_masks, dict):
+        meta = garment.segmentation_masks.get("extracted_metadata")
+        if isinstance(meta, dict):
+            price_val = meta.get("price")
+            if (not brand_name or brand_name == "FitMe") and meta.get("brand"):
+                brand_name = meta["brand"]
+            if (not platform or platform == "Store") and meta.get("platform"):
+                platform = meta["platform"]
+
     # Resolve garment images
     garment_images = garment.images if garment and isinstance(garment.images, list) else []
     garment_image_url = None
@@ -829,13 +893,24 @@ async def get_tryon_detail(
         elif isinstance(first_img, str):
             garment_image_url = first_img
 
-    signed_garment_image_url = storage_service.sign_if_private(garment_image_url) if garment_image_url else None
+    detail_paths = list(job.result_image_urls or [])
+    if garment_image_url:
+        detail_paths.append(garment_image_url)
+    for gimg in garment_images:
+        if isinstance(gimg, dict) and gimg.get("url"):
+            detail_paths.append(gimg["url"])
+        elif isinstance(gimg, str):
+            detail_paths.append(gimg)
+
+    signed_detail_map = await asyncio.to_thread(storage_service.create_signed_photo_urls_batch, detail_paths)
+
+    signed_garment_image_url = (signed_detail_map.get(garment_image_url) or storage_service.sign_if_private(garment_image_url)) if garment_image_url else None
     signed_garment_images = []
     for gimg in garment_images:
         if isinstance(gimg, dict) and "url" in gimg and gimg["url"]:
-            signed_garment_images.append({**gimg, "url": storage_service.sign_if_private(gimg["url"])})
+            signed_garment_images.append({**gimg, "url": signed_detail_map.get(gimg["url"]) or storage_service.sign_if_private(gimg["url"])})
         elif isinstance(gimg, str):
-            signed_garment_images.append(storage_service.sign_if_private(gimg))
+            signed_garment_images.append({"url": signed_detail_map.get(gimg) or storage_service.sign_if_private(gimg), "angle": "front"})
         else:
             signed_garment_images.append(gimg)
 
@@ -862,13 +937,7 @@ async def get_tryon_detail(
         if profile:
             size = recommend_size(profile, garment)
 
-    price_val = None
-    if garment and isinstance(garment.segmentation_masks, dict):
-        meta = garment.segmentation_masks.get("extracted_metadata")
-        if isinstance(meta, dict):
-            price_val = meta.get("price")
-
-    signed_results = [storage_service.sign_if_private(u) for u in (job.result_image_urls or [])]
+    signed_results = [signed_detail_map.get(u) or storage_service.sign_if_private(u) for u in (job.result_image_urls or [])]
 
     return TryOnDetailResponse(
         id=job.id,

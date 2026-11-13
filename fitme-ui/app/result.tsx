@@ -352,10 +352,12 @@ export default function Result() {
           if (activeAfterFetch === currentAuthUserId) {
             setDetail((prev) => ({
               ...res,
-              title: res.title || prev?.title || params.initialTitle || 'Virtual Look',
-              brand: res.brand || prev?.brand || params.initialBrand || 'FitMe',
+              title: (res.title && res.title !== 'Virtual Look') ? res.title : prev?.title || params.initialTitle || res.title || 'Virtual Look',
+              brand: (res.brand && res.brand !== 'FitMe') ? res.brand : prev?.brand || params.initialBrand || res.brand || 'FitMe',
               platform: res.platform || prev?.platform || params.initialPlatform,
               garment_image_url: res.garment_image_url || prev?.garment_image_url || params.initialGarmentUrl,
+              product_url: res.product_url || prev?.product_url || params.initialProductUrl,
+              price: (res.price !== null && res.price !== undefined) ? String(res.price) : prev?.price || params.initialPrice,
             }));
             setIsSaved(Boolean(res.is_saved));
           }
