@@ -68,6 +68,11 @@ export function CachedImage({
       return;
     }
 
+    // Set remote URI immediately so prop changes (e.g. toggling Original / On You) take effect instantly
+    if (isMounted) {
+      setResolvedUri(uri);
+    }
+
     // Check if permanent offline file exists on disk
     getLocalPermanentPath(uri).then((permPath) => {
       if (isMounted && permPath) {

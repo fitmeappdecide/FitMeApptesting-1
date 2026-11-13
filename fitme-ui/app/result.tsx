@@ -411,7 +411,7 @@ export default function Result() {
     extractedProduct?.imageUrl ||
     extractedProduct?.imageUrls?.[0] ||
     params.initialGarmentUrl ||
-    (RESULT_IMG !== FALLBACK_IMG ? RESULT_IMG : FALLBACK_IMG);
+    FALLBACK_IMG;
 
   // Modal image follows fsView
   const modalImageUri = fsView === 'you' ? RESULT_IMG : PRODUCT_IMG;
@@ -840,6 +840,7 @@ export default function Result() {
             </View>
           ) : (
             <CachedImage
+              key={view}
               uri={view === 'you' ? RESULT_IMG : PRODUCT_IMG}
               style={styles.mainImg}
             />
