@@ -215,10 +215,10 @@ function CustomTabBar({ state, navigation, descriptors }: any) {
         );
         return;
       }
-      // Open phone camera directly with quality: 0.8 compression (reduces 3-12MB down to ~300KB-800KB without quality loss)
+      // Open phone camera directly with quality: 0.5 compression (reduces 3-12MB down to ~300KB-800KB without quality loss)
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.8,
+        quality: 0.5,
         allowsEditing: false,
       });
       if (!result.canceled && result.assets[0]) {
@@ -252,7 +252,7 @@ function CustomTabBar({ state, navigation, descriptors }: any) {
               try {
                 const libRes = await ImagePicker.launchImageLibraryAsync({
                   mediaTypes: ImagePicker.MediaTypeOptions.Images,
-                  quality: 0.8,
+                  quality: 0.5,
                   allowsEditing: false,
                 });
                 if (!libRes.canceled && libRes.assets[0]) {

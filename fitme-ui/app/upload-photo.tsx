@@ -86,7 +86,7 @@ export default function UploadPhoto() {
     }
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.82,
+      quality: 0.5,
       allowsEditing: false,
     });
     if (!result.canceled && result.assets[0]) {
@@ -119,7 +119,7 @@ export default function UploadPhoto() {
     }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.82,
+      quality: 0.5,
       allowsEditing: false,
     });
     if (!result.canceled && result.assets[0]) {
@@ -153,7 +153,7 @@ export default function UploadPhoto() {
       }
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.8,
+        quality: 0.5,
         allowsEditing: false,
       });
       if (!result.canceled && result.assets[0]) {

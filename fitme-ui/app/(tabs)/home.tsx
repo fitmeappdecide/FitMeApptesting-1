@@ -340,7 +340,7 @@ export default function Home() {
     if (!perm.granted) return Alert.alert('Permission needed', 'Enable camera access to take a photo of a product.');
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.8,
+      quality: 0.5,
     });
     if (!result.canceled && result.assets[0]) {
       setExtractedProduct(null);
@@ -356,7 +356,7 @@ export default function Home() {
     if (!perm.granted) return Alert.alert('Permission needed', 'Enable photo access to choose a product image.');
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.8,
+      quality: 0.5,
     });
     if (!result.canceled && result.assets[0]) {
       setExtractedProduct(null);

@@ -40,7 +40,7 @@ export default function FindProductUpload() {
       }
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.85,
+        quality: 0.5,
         allowsEditing: false,
         base64: true,
       });
@@ -67,7 +67,7 @@ export default function FindProductUpload() {
       }
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.85,
+        quality: 0.5,
         allowsEditing: false,
         base64: true,
       });
