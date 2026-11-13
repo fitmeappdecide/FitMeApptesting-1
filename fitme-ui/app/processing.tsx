@@ -58,7 +58,7 @@ export default function Processing() {
   const [tipIndex, setTipIndex] = useState(0);
   const tipFadeAnim = useRef(new Animated.Value(1)).current;
 
-  const targetProgressRef = useRef(15);
+  const isCompletedRef = useRef(false);
   const pipelineStartedRef = useRef(false);
   const isPipelineRunningRef = useRef(false);
   const router = useRouter();
@@ -76,23 +76,46 @@ export default function Processing() {
   const setResultImageUrls = useSession((s) => s.setResultImageUrls);
   const extractedProduct = useSession((s) => s.extractedProduct);
 
-  // Smooth continuous progress ticker so the screen NEVER feels frozen or stuck
+  // Smooth, continuous, pacing-aware progress ticker:
+  // Calibrated for typical ~20-25s try-on duration.
+  // 1. Starts smoothly at 0% (never jumps or teleports to 40%).
+  // 2. Continuous steady climb throughout the entire AI generation phase.
+  // 3. Asymptotically crawls from 94% -> 99% so it NEVER freezes even during long requests.
+  // 4. Glides smoothly to 100% when server returns completed.
   useEffect(() => {
     const interval = setInterval(() => {
       setProgress((prev) => {
         if (prev >= 100) return 100;
 
-        // Same ticker for iOS and Android so both behave identically
-
-        const target = targetProgressRef.current;
-        if (prev < target) {
-          const diff = target - prev;
-          const step = Math.max(0.4, diff * 0.12);
-          return Math.min(target, prev + step);
-        } else if (target < 95 && prev < 95) {
-          return prev + 0.18;
+        // If try-on finished, glide smoothly and quickly to 100%
+        if (isCompletedRef.current) {
+          const step = Math.max(0.8, (100 - prev) * 0.35);
+          const next = prev + step;
+          return next >= 99.5 ? 100 : next;
         }
-        return prev;
+
+        // Pacing-aware curve:
+        // 0% -> 20%: ~3.5s (~0.42% per 75ms tick) - initial photo/garment stage
+        // 20% -> 60%: ~7.8s (~0.38% per tick) - core AI model initialization & inference
+        // 60% -> 85%: ~6.2s (~0.30% per tick) - fabric drape & body alignment
+        // 85% -> 93%: ~4.3s (~0.14% per tick) - lighting & shadow blending
+        // 93% -> 99%: Asymptotic deceleration (NEVER freezes, continuously increments)
+        let step = 0;
+        if (prev < 20) {
+          step = 0.42;
+        } else if (prev < 60) {
+          step = 0.38;
+        } else if (prev < 85) {
+          step = 0.30;
+        } else if (prev < 93) {
+          step = 0.14;
+        } else if (prev < 99) {
+          step = Math.max(0.015, (99.2 - prev) * 0.012);
+        } else {
+          step = 0;
+        }
+
+        return Math.min(99, prev + step);
       });
     }, 75);
     return () => clearInterval(interval);
@@ -100,7 +123,9 @@ export default function Processing() {
 
   // Dynamic status text update as progress advances
   useEffect(() => {
-    if (progress >= 95) {
+    if (isCompletedRef.current || progress >= 100) {
+      setStatusText('Your look is ready!');
+    } else if (progress >= 94) {
       setStatusText('Finishing touches...');
     } else if (progress >= 85) {
       setStatusText('Blending lighting & shadows...');
@@ -108,9 +133,9 @@ export default function Processing() {
       setStatusText('Fitting fabric & drape...');
     } else if (progress >= 55) {
       setStatusText('Generating AI Try-On...');
-    } else if (progress >= 30) {
+    } else if (progress >= 25) {
       setStatusText('Preparing garment & texture...');
-    } else if (progress >= 10) {
+    } else {
       setStatusText('Uploading photo...');
     }
   }, [progress]);
@@ -188,8 +213,6 @@ export default function Processing() {
 
     try {
       // 1. Concurrently resolve Garment Registration & User Photo Upload in parallel
-      targetProgressRef.current = 25;
-
       const garmentPromise = useSession.getState().garmentRegistrationPromise;
 
       const garmentTask = (async () => {
@@ -261,8 +284,6 @@ export default function Processing() {
 
       // 2. Prepare garment & Start Try-On Job (using activeScanId and/or activeSavedPhotoId)
       if ((activeScanId || activeSavedPhotoId) && activeProductId) {
-        targetProgressRef.current = 48;
-
         t5TryOnStart = performance.now();
         t5Date = new Date();
         const startRes = await tryOnApi.start(activeScanId, activeProductId, activeSavedPhotoId);
@@ -278,27 +299,17 @@ export default function Processing() {
           finalResultUrls = startRes.result_image_urls;
         } else {
           // Fallback Polling Path: if async/queued or result URLs absent in /start, poll as fallback
-          targetProgressRef.current = 75;
           let pollCount = 0;
           const tp0 = performance.now();
           const result = await tryOnApi.waitForResult(job_id, (status) => {
             pollCount++;
             const tNow = performance.now();
             console.log(`⏱️ [CLIENT TELEMETRY] Poll #${pollCount} @ T+${((tNow - tp0)/1000).toFixed(2)}s -> status: ${status.status}`);
-            if (status.status === 'queued') {
-              targetProgressRef.current = Math.max(targetProgressRef.current, 55);
-            } else if (status.status === 'uploading') {
-              targetProgressRef.current = Math.max(targetProgressRef.current, 65);
-            } else if (status.status === 'processing') {
-              const currentPct = status.progress_pct ?? 80;
-              targetProgressRef.current = Math.max(targetProgressRef.current, currentPct);
-            }
           });
           finalResultUrls = result.result_image_urls || [];
         }
 
-        targetProgressRef.current = 100;
-        setProgress(100);
+        isCompletedRef.current = true;
         setStatusText('Your look is ready!');
         setResultImageUrls(finalResultUrls);
 
@@ -453,12 +464,13 @@ TOTAL Processing -> Result: ${totalPipelineDuration}s
                 initialGarmentUrl: garmentImageUrl || '',
               },
             } as any),
-          450
+          650
         );
       }
     } catch (e) {
       console.error(e);
       isPipelineRunningRef.current = false;
+      isCompletedRef.current = false;
       const isUploadError = !activeScanId && !savedPhotoId;
       setErrorType(isUploadError ? 'upload' : 'tryon');
       setErrorMsg(e instanceof ApiError ? e.message : (e instanceof Error ? e.message : 'An unexpected error occurred.'));
@@ -476,6 +488,8 @@ TOTAL Processing -> Result: ${totalPipelineDuration}s
   const handleRetry = () => {
     isPipelineRunningRef.current = false;
     pipelineStartedRef.current = false;
+    isCompletedRef.current = false;
+    setProgress(0);
     setErrorType(null);
     setErrorMsg(null);
     useSession.getState().setGarmentRegistrationPromise(null);
