@@ -86,6 +86,36 @@ export class LooksRepository {
   }
 
   /**
+   * Retrieves all cached generated looks (up to limit, default 200) without artificial 20-item cutoff.
+   */
+  public static async getAllGeneratedLooks(limit = 200): Promise<LocalTryOnJob[]> {
+    return this.getGeneratedLooks(limit, 0);
+  }
+
+  /**
+   * Retrieves all cached saved looks (up to limit, default 200).
+   */
+  public static async getAllSavedLooks(limit = 200): Promise<LocalTryOnJob[]> {
+    return this.getSavedLooks(limit, 0);
+  }
+
+  /**
+   * Updates the permanent local image paths for a look in SQLite.
+   */
+  public static async updateLocalImagePaths(jobId: string, localPaths: string[]): Promise<void> {
+    const db = DatabaseManager.getDatabase();
+    const activeUserId = DatabaseManager.getActiveUserId();
+    if (!activeUserId) return;
+
+    await db.runAsync(
+      `UPDATE tryon_jobs 
+       SET local_image_paths = ?, _local_updated_at = ?
+       WHERE user_id = ? AND (local_id = ? OR server_id = ?);`,
+      [JSON.stringify(localPaths), Date.now(), activeUserId, jobId, jobId]
+    );
+  }
+
+  /**
    * Retrieves a single look by its local_id or server_id.
    */
   public static async getLookById(id: string): Promise<LocalTryOnJob | null> {

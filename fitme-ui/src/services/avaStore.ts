@@ -257,6 +257,7 @@ export const useAVAStore = create<AVAStoreState>()(
       partialize: (state) => ({
         cachedUserId: state.cachedUserId,
         conversations: state.conversations,
+        messagesByConversationId: state.messagesByConversationId,
       }),
     }
   )

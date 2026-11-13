@@ -4,14 +4,16 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { tryOnApi, TryOnHistoryItem, getAuthenticatedUserId, getSessionEpoch } from './api';
 import { DatabaseManager, LooksRepository, LocalTryOnJob, TryOnStatus } from '../repositories';
 import { useUserStore } from './userStore';
+import { persistJobImagesPermanently } from './imageStorage';
 
 export function mapLocalJobToHistoryItem(job: LocalTryOnJob, existingItem?: TryOnHistoryItem | number | null): TryOnHistoryItem {
   const existing = typeof existingItem === 'object' && existingItem !== null ? existingItem : null;
+  // Prefer local permanent disk paths for 100% offline access
   const resultUrls =
-    job.result_image_urls && job.result_image_urls.length > 0
-      ? job.result_image_urls
-      : job.local_image_paths && job.local_image_paths.length > 0
+    job.local_image_paths && job.local_image_paths.length > 0
       ? job.local_image_paths
+      : job.result_image_urls && job.result_image_urls.length > 0
+      ? job.result_image_urls
       : [];
 
   return {
@@ -19,7 +21,7 @@ export function mapLocalJobToHistoryItem(job: LocalTryOnJob, existingItem?: TryO
     garment_id: job.garment_id,
     status: job.status,
     result_image_urls: resultUrls,
-    thumbnail_url: resultUrls[0] || null,
+    thumbnail_url: (job.local_image_paths && job.local_image_paths[0]) || (job.result_image_urls && job.result_image_urls[0]) || null,
     created_at:
       typeof job.created_at === 'number'
         ? new Date(job.created_at).toISOString()
@@ -38,7 +40,8 @@ export function mapLocalJobToHistoryItem(job: LocalTryOnJob, existingItem?: TryO
 
 export function mapHistoryItemToLocalJob(
   item: TryOnHistoryItem,
-  activeUserId: string
+  activeUserId: string,
+  existingLocalPaths?: string[]
 ): Parameters<typeof LooksRepository.insertTryOnJob>[0] {
   let createdAtMs = Date.now();
   if (item.created_at) {
@@ -53,6 +56,10 @@ export function mapHistoryItemToLocalJob(
     }
   }
 
+  const localPaths = existingLocalPaths && existingLocalPaths.length > 0
+    ? existingLocalPaths
+    : (item.result_image_urls || []).filter((u) => u.startsWith('file://'));
+
   return {
     local_id: item.id,
     server_id: item.id,
@@ -60,7 +67,7 @@ export function mapHistoryItemToLocalJob(
     brand_id: null,
     status: (item.status || 'completed') as TryOnStatus,
     result_image_urls: item.result_image_urls || [],
-    local_image_paths: [],
+    local_image_paths: localPaths,
     is_saved: Boolean(item.is_saved),
     saved_photo_id: item.saved_photo_id || null,
     saved_photo_name: item.saved_photo_name || null,
@@ -130,8 +137,8 @@ export const useLooksStore = create<LooksState>()(
           cachedUserId: activeUserId,
           generatedLooks: generated,
           savedLooks: saved,
-          generatedPage: 1,
-          savedPage: 1,
+          generatedPage: Math.max(1, Math.ceil(generated.length / 20)),
+          savedPage: Math.max(1, Math.ceil(saved.length / 20)),
           generatedHasMore: generated.length >= 20,
           savedHasMore: saved.length >= 20,
           generatedLoadingMore: false,
@@ -152,10 +159,10 @@ export const useLooksStore = create<LooksState>()(
         // 1. Local SQLite Read First: Hydrate immediately if database is active (0ms UI latency)
         try {
           if (DatabaseManager.getActiveUserId() === activeUserId) {
-            // Read up to 100 locally cached looks to show complete history immediately
+            // Read all locally cached looks to show complete history immediately
             const [localGen, localSaved] = await Promise.all([
-              LooksRepository.getGeneratedLooks(100, 0),
-              LooksRepository.getSavedLooks(100, 0),
+              LooksRepository.getAllGeneratedLooks(200),
+              LooksRepository.getAllSavedLooks(200),
             ]);
             const currentGenMap = new Map(get().generatedLooks.map((item) => [item.id, item]));
             const currentSavedMap = new Map(get().savedLooks.map((item) => [item.id, item]));
@@ -252,6 +259,16 @@ export const useLooksStore = create<LooksState>()(
                     await LooksRepository.insertTryOnJob(
                       mapHistoryItemToLocalJob(item, activeUserId)
                     );
+                    // Non-blocking background save to permanent device storage
+                    persistJobImagesPermanently({
+                      id: item.id,
+                      result_image_urls: item.result_image_urls,
+                      garment_image_url: item.garment_image_url,
+                    }).then(({ localResultPaths }) => {
+                      if (localResultPaths.length > 0) {
+                        LooksRepository.updateLocalImagePaths(item.id, localResultPaths).catch(() => {});
+                      }
+                    }).catch(() => {});
                   }
                 }
                 if (Array.isArray(savedRes)) {
@@ -259,6 +276,15 @@ export const useLooksStore = create<LooksState>()(
                     await LooksRepository.insertTryOnJob(
                       mapHistoryItemToLocalJob(item, activeUserId)
                     );
+                    persistJobImagesPermanently({
+                      id: item.id,
+                      result_image_urls: item.result_image_urls,
+                      garment_image_url: item.garment_image_url,
+                    }).then(({ localResultPaths }) => {
+                      if (localResultPaths.length > 0) {
+                        LooksRepository.updateLocalImagePaths(item.id, localResultPaths).catch(() => {});
+                      }
+                    }).catch(() => {});
                   }
                 }
               } catch (dbSaveErr) {

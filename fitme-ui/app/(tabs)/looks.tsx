@@ -50,6 +50,14 @@ function getDisplayBrand(brand?: string | null, title?: string | null): string {
 function getTryOnCardImageUri(item: any): string {
   if (!item) return "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=400&q=80";
 
+  // 0. Direct permanent local disk paths (100% offline access)
+  if (Array.isArray(item.local_image_paths) && item.local_image_paths.length > 0) {
+    const localFirst = item.local_image_paths[0];
+    if (typeof localFirst === 'string' && localFirst.trim().length > 0) {
+      return localFirst.trim();
+    }
+  }
+
   // 1. Check thumbnail_url (local cached image URI or remote CDN thumbnail)
   if (item.thumbnail_url && typeof item.thumbnail_url === 'string' && item.thumbnail_url.trim().length > 0) {
     return item.thumbnail_url.trim();

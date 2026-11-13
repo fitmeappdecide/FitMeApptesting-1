@@ -380,9 +380,16 @@ export default function Result() {
     };
   }, [activeJobId]);
 
-  // Resolve RESULT_IMG (ON YOU)
+  // Resolve RESULT_IMG (ON YOU) - Prioritize local disk path for 100% offline access
+  const localResultImg =
+    (detail as any)?.local_image_paths && (detail as any).local_image_paths.length > 0
+      ? (detail as any).local_image_paths[0]
+      : null;
+
   const RESULT_IMG =
-    detail?.result_image_urls && detail.result_image_urls.length > 0 && detail.result_image_urls[0]
+    localResultImg
+      ? localResultImg
+      : detail?.result_image_urls && detail.result_image_urls.length > 0 && detail.result_image_urls[0]
       ? detail.result_image_urls[0]
       : params.initialResultUrl
       ? params.initialResultUrl

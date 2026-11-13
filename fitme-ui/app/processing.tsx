@@ -12,6 +12,7 @@ import { scanApi, tryOnApi, savedPhotosApi, ApiError, getAuthenticatedUserId, Tr
 import { DatabaseManager, LooksRepository } from '../src/repositories';
 import { useLooksStore } from '../src/services/looksStore';
 import { sendTryOnReadyNotification } from '../src/services/notificationService';
+import { persistJobImagesPermanently } from '../src/services/imageStorage';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const VIDEO_SIZE = Math.min(SCREEN_WIDTH * 0.78, SCREEN_HEIGHT * 0.34, 320);
@@ -380,6 +381,17 @@ export default function Processing() {
               created_at: Date.now(),
               completed_at: Date.now(),
             });
+
+            // Save images to permanent device storage in background for lifetime offline access
+            persistJobImagesPermanently({
+              id: job_id,
+              result_image_urls: finalResultUrls,
+              garment_image_url: garmentImageUrl || null,
+            }).then(({ localResultPaths }) => {
+              if (localResultPaths.length > 0) {
+                LooksRepository.updateLocalImagePaths(job_id, localResultPaths).catch(() => {});
+              }
+            }).catch(() => {});
           } catch (dbErr) {
             console.warn('[PROCESSING] Notice saving new look to SQLite:', dbErr);
           }

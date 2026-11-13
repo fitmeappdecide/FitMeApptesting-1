@@ -1044,10 +1044,23 @@ export default function Ava() {
 
   const handleBackToHub = () => {
     setCurrentView('hub');
+    setMessages([]);
+    setConversationId(undefined);
+    setActiveOutfit(undefined);
     loadHistoryList();
   };
 
   const handleOpenConversation = async (convId: string) => {
+    setActiveOutfit(undefined);
+    // Instant 0ms local hydration & state isolation to prevent chat bleeding
+    const ramMsgs = useAVAStore.getState().messagesByConversationId[convId];
+    if (ramMsgs && ramMsgs.length > 0) {
+      setMessages(mapAVAMessageItemsToUI(ramMsgs));
+      setLoading(false);
+    } else {
+      setMessages([]);
+      setLoading(true);
+    }
     setCurrentView('chat');
     await selectConversation(convId);
   };

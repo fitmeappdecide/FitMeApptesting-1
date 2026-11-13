@@ -260,8 +260,8 @@ class SyncManagerService {
       DatabaseManager.getActiveUserId() === userId
     ) {
       const [localGen, localSaved] = await Promise.all([
-        LooksRepository.getGeneratedLooks(20, 0),
-        LooksRepository.getSavedLooks(20, 0),
+        LooksRepository.getAllGeneratedLooks(200),
+        LooksRepository.getAllSavedLooks(200),
       ]);
       const mappedGen = localGen.map(mapLocalJobToHistoryItem);
       const mappedSaved = localSaved.map(mapLocalJobToHistoryItem);
@@ -282,6 +282,17 @@ class SyncManagerService {
       DatabaseManager.getActiveUserId() !== userId
     ) {
       return 0;
+    }
+
+    // Pre-cache messages for the 5 most recent conversations in SQLite in the background
+    if (Array.isArray(convs) && convs.length > 0) {
+      const recentConvs = convs.slice(0, 5);
+      for (const conv of recentConvs) {
+        try {
+          const { getAVAMessages } = require('./avaService');
+          await getAVAMessages(conv.id);
+        } catch (_) {}
+      }
     }
 
     return Array.isArray(convs) ? convs.length : 0;

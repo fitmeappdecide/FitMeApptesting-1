@@ -121,8 +121,8 @@ export async function initializeUserSession(user: {
 
     // Hydrate looks immediately from SQLite (0ms UI latency)
     const [localGen, localSaved] = await Promise.all([
-      LooksRepository.getGeneratedLooks(20, 0),
-      LooksRepository.getSavedLooks(20, 0),
+      LooksRepository.getAllGeneratedLooks(200),
+      LooksRepository.getAllSavedLooks(200),
     ]);
     const mappedGen = localGen.map((j) => mapLocalJobToHistoryItem(j));
     const mappedSaved = localSaved.map((j) => mapLocalJobToHistoryItem(j));
