@@ -201,7 +201,7 @@ class SyncManagerService {
     let page = 1;
     let hasMore = true;
     let totalSynced = 0;
-    const maxPages = 5; // Download up to 100 historical looks upon initial cloud hydration
+    const maxPages = 1; // Single request returns every completed look (limit 500)
 
     while (hasMore && page <= maxPages) {
       if (
@@ -215,7 +215,7 @@ class SyncManagerService {
       const res = await tryOnApi.getHistory({
         status: 'completed',
         page,
-        limit: 20,
+        limit: 500,
       });
 
       if (
@@ -241,8 +241,8 @@ class SyncManagerService {
         // Instant Page-1 UI Hydration: display looks immediately without waiting for remaining pages
         if (page === 2 && totalSynced > 0) {
           const [localGen, localSaved] = await Promise.all([
-            LooksRepository.getGeneratedLooks(20, 0),
-            LooksRepository.getSavedLooks(20, 0),
+            LooksRepository.getAllGeneratedLooks(1000),
+            LooksRepository.getAllSavedLooks(1000),
           ]);
           const mappedGen = localGen.map(mapLocalJobToHistoryItem);
           const mappedSaved = localSaved.map(mapLocalJobToHistoryItem);
@@ -260,8 +260,8 @@ class SyncManagerService {
       DatabaseManager.getActiveUserId() === userId
     ) {
       const [localGen, localSaved] = await Promise.all([
-        LooksRepository.getAllGeneratedLooks(200),
-        LooksRepository.getAllSavedLooks(200),
+        LooksRepository.getAllGeneratedLooks(1000),
+        LooksRepository.getAllSavedLooks(1000),
       ]);
       const mappedGen = localGen.map(mapLocalJobToHistoryItem);
       const mappedSaved = localSaved.map(mapLocalJobToHistoryItem);
@@ -284,9 +284,9 @@ class SyncManagerService {
       return 0;
     }
 
-    // Pre-cache messages for the 5 most recent conversations in SQLite in the background
+    // Pre-cache messages for ALL conversations in SQLite so every chat lives on the phone
     if (Array.isArray(convs) && convs.length > 0) {
-      const recentConvs = convs.slice(0, 5);
+      const recentConvs = convs;
       for (const conv of recentConvs) {
         try {
           const { getAVAMessages } = require('./avaService');

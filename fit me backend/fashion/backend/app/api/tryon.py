@@ -515,7 +515,7 @@ async def history(
     user: User = Depends(get_current_user_or_anonymous),
     db: AsyncSession = Depends(get_db),
     page: int = 1,
-    limit: int = 20,
+    limit: int = Query(default=500, ge=1, le=1000),
 ) -> list[TryOnHistoryItem]:
     if user.email == settings.anonymous_website_user_email.lower():
         return []

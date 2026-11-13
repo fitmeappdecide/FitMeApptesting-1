@@ -133,14 +133,26 @@ export const useLooksStore = create<LooksState>()(
         userId?: string
       ) => {
         const activeUserId = userId || getAuthenticatedUserId();
+        const cur = get();
+        const same = (a: TryOnHistoryItem[], b: TryOnHistoryItem[]) =>
+          a.length === b.length &&
+          a.every((x, i) => x.id === b[i].id && x.is_saved === b[i].is_saved && x.thumbnail_url === b[i].thumbnail_url);
+        if (
+          cur.cachedUserId === activeUserId &&
+          !cur.generatedHasMore &&
+          same(cur.generatedLooks, generated) &&
+          same(cur.savedLooks, saved)
+        ) {
+          return;
+        }
         set({
           cachedUserId: activeUserId,
           generatedLooks: generated,
           savedLooks: saved,
-          generatedPage: Math.max(1, Math.ceil(generated.length / 20)),
-          savedPage: Math.max(1, Math.ceil(saved.length / 20)),
-          generatedHasMore: generated.length >= 20,
-          savedHasMore: saved.length >= 20,
+          generatedPage: 1,
+          savedPage: 1,
+          generatedHasMore: false,
+          savedHasMore: false,
           generatedLoadingMore: false,
           savedLoadingMore: false,
           loading: false,
@@ -161,8 +173,8 @@ export const useLooksStore = create<LooksState>()(
           if (DatabaseManager.getActiveUserId() === activeUserId) {
             // Read all locally cached looks to show complete history immediately
             const [localGen, localSaved] = await Promise.all([
-              LooksRepository.getAllGeneratedLooks(200),
-              LooksRepository.getAllSavedLooks(200),
+              LooksRepository.getAllGeneratedLooks(1000),
+              LooksRepository.getAllSavedLooks(1000),
             ]);
             const currentGenMap = new Map(get().generatedLooks.map((item) => [item.id, item]));
             const currentSavedMap = new Map(get().savedLooks.map((item) => [item.id, item]));
@@ -222,7 +234,7 @@ export const useLooksStore = create<LooksState>()(
                   status: 'completed',
                   saved_only: false,
                   page: 1,
-                  limit: 20,
+                  limit: 500,
                 })
                 .catch((err) => {
                   console.warn('[LooksStore] Error fetching generated looks:', err?.message || err);
@@ -233,7 +245,7 @@ export const useLooksStore = create<LooksState>()(
                   status: 'completed',
                   saved_only: true,
                   page: 1,
-                  limit: 20,
+                  limit: 500,
                 })
                 .catch((err) => {
                   console.warn('[LooksStore] Error fetching saved looks:', err?.message || err);
@@ -293,20 +305,25 @@ export const useLooksStore = create<LooksState>()(
             }
 
             // Update Zustand store
+            const sameList = (a: TryOnHistoryItem[], b: TryOnHistoryItem[]) =>
+              a.length === b.length &&
+              a.every((x, i) => x.id === b[i].id && x.is_saved === b[i].is_saved);
+
             if (Array.isArray(genRes)) {
               const currentGen = get().generatedLooks;
               const serverIds = new Set(genRes.map((i) => i.id));
-              // Merge server page 1 with any existing items beyond page 1
               const remaining = currentGen.filter((i) => !serverIds.has(i.id));
               const mergedGen = [...genRes, ...remaining];
 
-              set({
-                cachedUserId: activeUserId,
-                generatedLooks: mergedGen,
-                generatedPage: Math.max(1, Math.ceil(mergedGen.length / 20)),
-                generatedHasMore: genRes.length >= 20,
-                generatedLoadingMore: false,
-              });
+              if (!sameList(currentGen, mergedGen) || get().generatedHasMore) {
+                set({
+                  cachedUserId: activeUserId,
+                  generatedLooks: mergedGen,
+                  generatedPage: 1,
+                  generatedHasMore: false,
+                  generatedLoadingMore: false,
+                });
+              }
               AsyncStorage.setItem(
                 'fitme_home_recent_tryons',
                 JSON.stringify(mergedGen.slice(0, 8))
@@ -318,13 +335,15 @@ export const useLooksStore = create<LooksState>()(
               const remaining = currentSaved.filter((i) => !serverIds.has(i.id));
               const mergedSaved = [...savedRes, ...remaining];
 
-              set({
-                cachedUserId: activeUserId,
-                savedLooks: mergedSaved,
-                savedPage: Math.max(1, Math.ceil(mergedSaved.length / 20)),
-                savedHasMore: savedRes.length >= 20,
-                savedLoadingMore: false,
-              });
+              if (!sameList(currentSaved, mergedSaved) || get().savedHasMore) {
+                set({
+                  cachedUserId: activeUserId,
+                  savedLooks: mergedSaved,
+                  savedPage: 1,
+                  savedHasMore: false,
+                  savedLoadingMore: false,
+                });
+              }
             }
           } finally {
             set({ loading: false, refreshing: false });

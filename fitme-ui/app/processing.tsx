@@ -82,23 +82,8 @@ export default function Processing() {
       setProgress((prev) => {
         if (prev >= 100) return 100;
 
-        if (Platform.OS === 'android') {
-          const target = targetProgressRef.current;
-          if (prev < target) {
-            const diff = target - prev;
-            // Smooth pacing on Android: maximum step of 0.8% per 75ms tick
-            // Prevents sudden jumping from 0% straight to 40% when tasks resolve quickly
-            const step = Math.min(0.8, Math.max(0.25, diff * 0.08));
-            return Math.min(target, prev + step);
-          } else if (prev < 99) {
-            // Asymptotic creep towards 99% ceiling so Android progress is continuously active during VTON inference
-            const creep = Math.max(0.04, (99 - prev) * 0.02);
-            return Math.min(99, prev + creep);
-          }
-          return prev;
-        }
+        // Same ticker for iOS and Android so both behave identically
 
-        // Original iOS ticker behavior (UNTOUCHED)
         const target = targetProgressRef.current;
         if (prev < target) {
           const diff = target - prev;
@@ -557,9 +542,7 @@ TOTAL Processing -> Result: ${totalPipelineDuration}s
 
             <View style={styles.infoContainer}>
               <Text style={styles.percentText}>
-                {Platform.OS === 'android'
-                  ? (progress >= 100 ? 100 : Math.min(99, Math.floor(progress)))
-                  : Math.min(100, Math.round(progress))}%
+                {Math.min(100, Math.round(progress))}%
               </Text>
               <Text style={styles.statusText}>{statusText}</Text>
 

@@ -237,6 +237,17 @@ export class AVARepository {
 
     await DatabaseManager.withTransaction(async (txDb) => {
       const now = Date.now();
+
+      // Guarantee the parent conversation row exists (FK ava_messages.conversation_id)
+      const convIds = Array.from(new Set(messages.map((m) => m.conversation_id)));
+      for (const convId of convIds) {
+        await txDb.runAsync(
+          `INSERT OR IGNORE INTO ava_conversations (
+            id, user_id, title, created_at, updated_at, _sync_status, _local_updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?);`,
+          [convId, activeUserId, 'Fashion Styling Session', now, now, 'synced', now]
+        );
+      }
       for (const m of messages) {
         const createdAtMs =
           typeof m.created_at === 'number'

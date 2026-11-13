@@ -88,14 +88,14 @@ export class LooksRepository {
   /**
    * Retrieves all cached generated looks (up to limit, default 200) without artificial 20-item cutoff.
    */
-  public static async getAllGeneratedLooks(limit = 200): Promise<LocalTryOnJob[]> {
+  public static async getAllGeneratedLooks(limit = 1000): Promise<LocalTryOnJob[]> {
     return this.getGeneratedLooks(limit, 0);
   }
 
   /**
    * Retrieves all cached saved looks (up to limit, default 200).
    */
-  public static async getAllSavedLooks(limit = 200): Promise<LocalTryOnJob[]> {
+  public static async getAllSavedLooks(limit = 1000): Promise<LocalTryOnJob[]> {
     return this.getSavedLooks(limit, 0);
   }
 

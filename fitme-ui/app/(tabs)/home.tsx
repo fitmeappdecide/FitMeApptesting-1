@@ -555,12 +555,15 @@ export default function Home() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Recent try-ons</Text>
-            <Link href="/(tabs)/looks" asChild>
-              <TouchableOpacity style={styles.seeAllRow} activeOpacity={0.7}>
-                <Text style={styles.seeAllText}>See all</Text>
-                <Ionicons name="arrow-forward" size={12} color={Colors.accent} />
-              </TouchableOpacity>
-            </Link>
+            <TouchableOpacity
+              style={styles.seeAllRow}
+              activeOpacity={0.7}
+              hitSlop={{ top: 16, bottom: 16, left: 24, right: 16 }}
+              onPress={() => router.navigate('/(tabs)/looks')}
+            >
+              <Text style={styles.seeAllText}>See all</Text>
+              <Ionicons name="arrow-forward" size={12} color={Colors.accent} />
+            </TouchableOpacity>
           </View>
           {recentTryons.length === 0 ? (
             looksLoading ? (

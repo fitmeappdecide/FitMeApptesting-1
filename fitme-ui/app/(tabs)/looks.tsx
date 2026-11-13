@@ -26,8 +26,8 @@ import { useLooksStore } from "../../src/services/looksStore";
 const tabs = ["Generated", "Saved"] as const;
 type TabType = (typeof tabs)[number];
 
-// Aspect ratios alternated for masonry feel
-const ASPECTS = [5 / 3, 4 / 3, 1, 4 / 3, 3 / 5, 4 / 3];
+// One standard portrait frame (width:height = 3:4) for every look card
+const CARD_ASPECT = 3 / 4;
 
 function getDisplayBrand(brand?: string | null, title?: string | null): string {
   if (!brand) return "FitMe";
@@ -160,7 +160,7 @@ const LookCard = React.memo(function LookCard({
           uri={imageUrl}
           style={[
             styles.masonryImg,
-            { aspectRatio: 1 / ASPECTS[idx % ASPECTS.length] },
+            { aspectRatio: CARD_ASPECT },
           ]}
         />
         <View style={styles.masonryInfo}>

@@ -19,11 +19,11 @@ async def profile(user: User = Depends(get_current_user), db: AsyncSession = Dep
     body_profile = result.scalars().first()
     
     try_on_count = await db.scalar(
-        select(func.count()).select_from(TryOnJob).where(TryOnJob.user_id == user.id)
+        select(func.count()).select_from(TryOnJob).where(TryOnJob.user_id == user.id, TryOnJob.status == "completed")
     ) or 0
     
     saved_count = await db.scalar(
-        select(func.count()).select_from(TryOnJob).where(TryOnJob.user_id == user.id, TryOnJob.is_saved == True)
+        select(func.count()).select_from(TryOnJob).where(TryOnJob.user_id == user.id, TryOnJob.status == "completed", TryOnJob.is_saved == True)
     ) or 0
     
     return UserProfile(

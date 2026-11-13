@@ -75,6 +75,18 @@ async def startup() -> None:
     except Exception as e:
         print(f"Warning: Database initialization skipped due to connection issue ({e}). Server continuing.")
 
+    # Warm up the SegFormer model in the background (non-blocking) so the first
+    # try-on after a restart does not pay the model-load cost.
+    async def _warm_segformer() -> None:
+        try:
+            from app.services.preprocessing.garment_preprocessor import garment_preprocessor
+            await garment_preprocessor.ensure_model_loaded()
+        except Exception as warm_err:
+            print(f"Warning: SegFormer warm-up skipped ({warm_err}).")
+
+    import asyncio
+    asyncio.create_task(_warm_segformer())
+
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
