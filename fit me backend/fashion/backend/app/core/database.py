@@ -45,15 +45,12 @@ def _build_engine():
     if "postgresql" in db_url:
         return create_async_engine(
             db_url,
-            poolclass=AsyncAdaptedQueuePool,
-            pool_pre_ping=True,
-            pool_recycle=300,
-            pool_size=10,
-            max_overflow=20,
+            poolclass=NullPool,
             future=True,
             connect_args={
                 "statement_cache_size": 0,
                 "prepared_statement_cache_size": 0,
+                "prepared_statement_name_func": lambda: f"__asyncpg_{uuid.uuid4().hex}__",
             },
         )
     # SQLite configuration for standalone local development

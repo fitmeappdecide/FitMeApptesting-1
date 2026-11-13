@@ -518,7 +518,7 @@ TOTAL Processing -> Result: ${totalPipelineDuration}s
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <AppHeader title="Just a moment" back />
+      <AppHeader title="Just a moment" />
       <View style={styles.content}>
         {errorType ? (
           <View style={styles.errorContainer}>
