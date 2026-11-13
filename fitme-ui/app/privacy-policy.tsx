@@ -6,7 +6,7 @@ import { AppHeader } from '../src/components/AppHeader';
 import { Colors, Spacing, Radii, Fonts } from '../src/constants/theme';
 
 const WEB_URL = 'https://fitmefashion.com/privacy-policy';
-const SUPPORT_EMAIL = 'fitme.appsupport@gmail.com';
+const SUPPORT_EMAIL = 'support@fitmefashion.com';
 
 const sections = [
   {

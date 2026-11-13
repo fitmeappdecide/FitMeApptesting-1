@@ -54,8 +54,8 @@ export default function PrivacySecurity() {
             </View>
             <Text style={styles.cardTitle}>Contact Privacy Team</Text>
           </View>
-          <TouchableOpacity onPress={() => Linking.openURL('mailto:fitme.appsupport@gmail.com')}>
-            <Text style={styles.email}>fitme.appsupport@gmail.com</Text>
+          <TouchableOpacity onPress={() => Linking.openURL('mailto:support@fitmefashion.com')}>
+            <Text style={styles.email}>support@fitmefashion.com</Text>
           </TouchableOpacity>
         </View>
 

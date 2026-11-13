@@ -6,7 +6,7 @@ import { AppHeader } from '../src/components/AppHeader';
 import { Colors, Spacing, Radii, Fonts } from '../src/constants/theme';
 
 const WEB_URL = 'https://fitmefashion.com/terms-and-conditions';
-const SUPPORT_EMAIL = 'fitme.appsupport@gmail.com';
+const SUPPORT_EMAIL = 'support@fitmefashion.com';
 
 const sections = [
   {
@@ -22,7 +22,7 @@ const sections = [
   {
     title: '3. User Accounts & Security',
     content:
-      'You are responsible for maintaining the confidentiality of your login credentials and for all activities that occur under your account. You agree to notify us immediately of any unauthorized access or breach of security at fitme.appsupport@gmail.com.',
+      'You are responsible for maintaining the confidentiality of your login credentials and for all activities that occur under your account. You agree to notify us immediately of any unauthorized access or breach of security at support@fitmefashion.com.',
   },
   {
     title: '4. User-Uploaded Photos & Content Standards',

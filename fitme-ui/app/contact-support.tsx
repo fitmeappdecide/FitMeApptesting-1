@@ -6,7 +6,7 @@ import { AppHeader } from '../src/components/AppHeader';
 import { Colors, Spacing, Radii } from '../src/constants/theme';
 
 export default function ContactSupport() {
-  const supportEmail = 'fitme.appsupport@gmail.com';
+  const supportEmail = 'support@fitmefashion.com';
 
   const handleCopyEmail = () => {
     Clipboard.setString(supportEmail);

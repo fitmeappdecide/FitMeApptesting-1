@@ -125,7 +125,7 @@ export default function Profile() {
 
   /* Menu Handlers ─────────────────────────────────── */
   const handleSupport = () => {
-    Linking.openURL('mailto:fitme.appsupport@gmail.com').catch(() => {
+    Linking.openURL('mailto:support@fitmefashion.com').catch(() => {
       router.push('/contact-support');
     });
   };
