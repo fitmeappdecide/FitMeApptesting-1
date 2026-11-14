@@ -221,7 +221,8 @@ export default function Import() {
     setSavedPhotoName(null);
 
     // Create background registration promise so network request runs in parallel
-    const promise = (async () => {
+    const existingInFlight = useSession.getState().garmentRegistrationPromise;
+    const promise = existingInFlight || (async () => {
       if (productImageUri) {
         console.log('[PHOTO] Uploading original selected image bytes to Supabase Storage...');
         return productApi.uploadGarment(productImageUri, {

@@ -17,7 +17,7 @@ import { useSession } from '../../src/services/session';
 import { useUserStore } from '../../src/services/userStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CachedImage } from '../../src/components/CachedImage';
-import { productIntelligenceApi, PIHistoryItem, tryOnApi, TryOnHistoryItem } from '../../src/services/api';
+import { productIntelligenceApi, PIHistoryItem, tryOnApi, TryOnHistoryItem, productApi } from '../../src/services/api';
 import { useLooksStore } from '../../src/services/looksStore';
 import { usePriceComparisonStore } from '../../src/services/priceComparisonStore';
 import { normalizeProductUrl } from '../../src/utils/url';
@@ -343,10 +343,13 @@ export default function Home() {
       quality: 0.5,
     });
     if (!result.canceled && result.assets[0]) {
+      const uri = result.assets[0].uri;
       setExtractedProduct(null);
       setSourceUrl(null);
       setProductId('');
-      setProductImageUri(result.assets[0].uri);
+      setProductImageUri(uri);
+      const promise = productApi.uploadGarment(uri, { title: 'Quick Reference Outfit' });
+      useSession.getState().setGarmentRegistrationPromise(promise);
       router.push('/import');
     }
   };
@@ -359,10 +362,13 @@ export default function Home() {
       quality: 0.5,
     });
     if (!result.canceled && result.assets[0]) {
+      const uri = result.assets[0].uri;
       setExtractedProduct(null);
       setSourceUrl(null);
       setProductId('');
-      setProductImageUri(result.assets[0].uri);
+      setProductImageUri(uri);
+      const promise = productApi.uploadGarment(uri, { title: 'Quick Reference Outfit' });
+      useSession.getState().setGarmentRegistrationPromise(promise);
       router.push('/import');
     }
   };

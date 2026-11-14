@@ -7,6 +7,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Colors, Radii, Spacing } from '../../src/constants/theme';
 import { useSession } from '../../src/services/session';
 import { useSavedPhotosStore } from '../../src/services/savedPhotosStore';
+import { productApi } from '../../src/services/api';
 
 // Brand icon — matches the new logo
 function AvaIcon({ color }: { color: string }) {
@@ -236,6 +237,10 @@ function CustomTabBar({ state, navigation, descriptors }: any) {
         // Store captured bottom camera image strictly as the outfit reference image (Quick Try-On)
         useSession.getState().setProductImageUri(uri);
 
+        // Start background registration immediately so by the time user picks their photo it's already done!
+        const promise = productApi.uploadGarment(uri, { title: 'Quick Reference Outfit' });
+        useSession.getState().setGarmentRegistrationPromise(promise);
+
         // Redirect to Product Preview page AFTER photo is clicked/taken
         router.push('/import' as any);
       }
@@ -268,6 +273,10 @@ function CustomTabBar({ state, navigation, descriptors }: any) {
                   useSession.getState().setSavedPhotoName(null);
 
                   useSession.getState().setProductImageUri(uri);
+
+                  // Start background registration immediately
+                  const promise = productApi.uploadGarment(uri, { title: 'Quick Reference Outfit' });
+                  useSession.getState().setGarmentRegistrationPromise(promise);
 
                   // Redirect to Product Preview page after photo selection
                   router.push('/import' as any);

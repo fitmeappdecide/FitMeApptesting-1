@@ -15,6 +15,7 @@
  */
 import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
+import { optimizeImageForUpload } from '../utils/imageOptimizer';
 
 // Determine API base URL, strictly separating DEVELOPMENT (local backend) from PRODUCTION (Railway)
 import { NativeModules, Platform } from 'react-native';
@@ -470,11 +471,14 @@ export const productApi = {
 
   /** Upload an uncropped, original garment image file to Supabase Storage and register the garment */
   uploadGarment: async (imageUri: string, metadata?: { title?: string; brand?: string; price?: string }): Promise<ProductResponse> => {
+    // Automatically downscale on-device to max 1200px before uploading (cuts ~5MB to ~150KB)
+    const targetUri = await optimizeImageForUpload(imageUri, 1200, 0.8);
+
     const formData = new FormData();
-    let formattedUri = imageUri;
+    let formattedUri = targetUri;
 
     if (Platform.OS === 'android') {
-      const cleanUri = imageUri ? imageUri.split('?')[0] : '';
+      const cleanUri = targetUri ? targetUri.split('?')[0] : '';
       formattedUri = cleanUri;
       if (
         formattedUri &&
@@ -487,7 +491,7 @@ export const productApi = {
       }
     }
 
-    const cleanPath = imageUri ? imageUri.split('?')[0] : '';
+    const cleanPath = targetUri ? targetUri.split('?')[0] : '';
     const rawName = cleanPath.split('/').pop() || 'garment.jpg';
     const baseName = rawName.split('.')[0] || 'garment';
     // Always format garment filename as .jpg and image/jpeg MIME type for 100% Supabase Storage & AI pipeline compatibility
@@ -507,9 +511,10 @@ export const productApi = {
   },
 
   /** Extract normalized product data from a screenshot using the Product Intelligence Engine */
-  extractScreenshot: (imageUri: string) => {
+  extractScreenshot: async (imageUri: string) => {
+    const targetUri = await optimizeImageForUpload(imageUri, 1200, 0.8);
     const formData = new FormData();
-    formData.append('image', { uri: imageUri, type: 'image/jpeg', name: 'screenshot.jpg' } as any);
+    formData.append('image', { uri: targetUri, type: 'image/jpeg', name: 'screenshot.jpg' } as any);
     return request<Record<string, any>>('/api/v1/product/extract-screenshot', {
       method: 'POST',
       body: formData,
@@ -981,11 +986,14 @@ export type SavedPhoto = {
 
 export const savedPhotosApi = {
   upload: async (imageUri: string, displayName?: string): Promise<SavedPhoto> => {
+    // Automatically downscale on-device to max 1200px before uploading (cuts ~5MB to ~150KB)
+    const targetUri = await optimizeImageForUpload(imageUri, 1200, 0.8);
+
     const formData = new FormData();
-    const filename = imageUri.split('/').pop() || 'photo.jpg';
+    const filename = targetUri.split('/').pop() || 'photo.jpg';
     const match = /\.(\w+)$/.exec(filename);
     const type = match ? `image/${match[1].toLowerCase()}` : 'image/jpeg';
-    formData.append('file', { uri: imageUri, name: filename, type } as any);
+    formData.append('file', { uri: targetUri, name: filename, type } as any);
     if (displayName && displayName.trim()) {
       formData.append('display_name', displayName.trim());
     }
