@@ -45,7 +45,11 @@ def _build_engine():
     if "postgresql" in db_url:
         return create_async_engine(
             db_url,
-            poolclass=NullPool,
+            poolclass=AsyncAdaptedQueuePool,
+            pool_size=10,
+            max_overflow=20,
+            pool_pre_ping=True,
+            pool_recycle=300,
             future=True,
             connect_args={
                 "statement_cache_size": 0,

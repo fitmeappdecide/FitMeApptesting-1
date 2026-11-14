@@ -75,17 +75,27 @@ async def startup() -> None:
     except Exception as e:
         print(f"Warning: Database initialization skipped due to connection issue ({e}). Server continuing.")
 
-    # Warm up the SegFormer model in the background (non-blocking) so the first
+    # Warm up SegFormer and YOLOv8 models in the background (non-blocking) so the first
     # try-on after a restart does not pay the model-load cost.
-    async def _warm_segformer() -> None:
+    async def _warm_ml_models() -> None:
         try:
             from app.services.preprocessing.garment_preprocessor import garment_preprocessor
             await garment_preprocessor.ensure_model_loaded()
+            print("✅ [STARTUP] SegFormer garment preprocessor pre-warmed successfully.")
         except Exception as warm_err:
             print(f"Warning: SegFormer warm-up skipped ({warm_err}).")
 
+        try:
+            from app.services.preprocessing.person_detector import LocalPersonDetector
+            detector = LocalPersonDetector()
+            import asyncio
+            await asyncio.to_thread(detector._get_model)
+            print("✅ [STARTUP] YOLOv8 person detector pre-warmed successfully.")
+        except Exception as yolo_err:
+            print(f"Warning: YOLO warm-up skipped ({yolo_err}).")
+
     import asyncio
-    asyncio.create_task(_warm_segformer())
+    asyncio.create_task(_warm_ml_models())
 
 
 @app.on_event("shutdown")
